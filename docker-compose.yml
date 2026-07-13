@@ -4,8 +4,12 @@ services:
     restart: unless-stopped
     volumes:
       - bot_data:/app/data
+    # The token is loaded from .env straight into the container, so it stays out
+    # of the compose file and `docker compose config` output. For even tighter
+    # handling, use Docker secrets and read the token from a file.
+    env_file:
+      - .env
     environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?set in .env}
       - CHECK_INTERVAL_MINUTES=${CHECK_INTERVAL_MINUTES:-15}
       - DM_MIN_REQUEST_INTERVAL=${DM_MIN_REQUEST_INTERVAL:-2}
     cap_drop:
