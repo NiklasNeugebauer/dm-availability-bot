@@ -35,7 +35,7 @@ DB_PATH = os.environ.get("DB_PATH", "data/bot.db")
 
 # Abuse protection
 # Max products a single chat may watch (guards DB growth and per-chat poll cost).
-MAX_SUBSCRIPTIONS_PER_CHAT = int(os.environ.get("MAX_SUBSCRIPTIONS_PER_CHAT", "40"))
+MAX_SUBSCRIPTIONS_PER_CHAT = int(os.environ.get("MAX_SUBSCRIPTIONS_PER_CHAT", "15"))
 # dm article numbers are far below this; the bound also guards against SQLite
 # 64-bit INTEGER overflow from a forged/oversized value.
 MAX_DAN = 10**10

@@ -34,19 +34,19 @@ def parse_dan(text: str) -> int | None:
     return dan if 0 < dan < MAX_DAN else None
 
 HELP_TEXT = (
-    "I watch product availability at your local dm-drogerie markt and "
-    "notify you when something comes back in stock or sells out.\n\n"
-    "Setup:\n"
-    "1. /store <PLZ or city> — pick your dm store (or just send me a location)\n"
-    "2. /search <product> — find products and subscribe with one tap\n\n"
-    "Commands:\n"
-    "/store <PLZ|city> — choose your dm store\n"
-    "/search <query> — search dm products\n"
-    "/subscribe <DAN> — subscribe to a product by its dm article number\n"
-    "/unsubscribe <DAN> — stop watching a product\n"
-    "/list — your subscriptions and their current status\n"
-    "/check — check availability right now\n"
-    "/help — this message"
+    "Ich beobachte die Produktverfügbarkeit in deinem dm-Markt und "
+    "benachrichtige dich, wenn etwas wieder verfügbar ist oder ausverkauft wird.\n\n"
+    "Einrichtung:\n"
+    "1. /store <PLZ oder Stadt> — wähle deinen dm-Markt (oder sende mir einfach einen Standort)\n"
+    "2. /search <Produkt> — finde Produkte und abonniere mit einem Tippen\n\n"
+    "Befehle:\n"
+    "/store <PLZ|Stadt> — deinen dm-Markt wählen\n"
+    "/search <Suchbegriff> — dm-Produkte suchen\n"
+    "/subscribe <DAN> — ein Produkt über seine dm-Artikelnummer abonnieren\n"
+    "/unsubscribe <DAN> — ein Produkt nicht mehr beobachten\n"
+    "/list — deine Abos und ihr aktueller Status\n"
+    "/check — Verfügbarkeit jetzt prüfen\n"
+    "/help — diese Nachricht"
 )
 
 
@@ -70,15 +70,15 @@ def transition(last_available: int | None, current: bool) -> str | None:
 
 def status_line(name: str, availability: Availability | None) -> str:
     if availability is None or availability.store_available is None:
-        return f"❓ {name} — no store data"
+        return f"❓ {name} — keine Marktdaten"
     if availability.store_available:
         stock = f" ({availability.store_stock}x)" if availability.store_stock is not None else ""
-        return f"✅ {name} — in stock{stock}"
-    return f"❌ {name} — not available"
+        return f"✅ {name} — verfügbar{stock}"
+    return f"❌ {name} — nicht verfügbar"
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hi! " + HELP_TEXT)
+    await update.message.reply_text("Hallo! " + HELP_TEXT)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,26 +89,29 @@ async def _reply_store_choices(update: Update, context: ContextTypes.DEFAULT_TYP
     stores = await get_api(context).find_stores(lat, lon, STORE_SEARCH_RADIUS_KM)
     if not stores:
         await update.message.reply_text(
-            f"No dm store found within {STORE_SEARCH_RADIUS_KM:.0f} km. Try a different location."
+            f"Kein dm-Markt im Umkreis von {STORE_SEARCH_RADIUS_KM:.0f} km gefunden. "
+            "Versuche einen anderen Ort."
         )
         return
     keyboard = [
         [InlineKeyboardButton(f"{s.name} ({s.distance_km:.1f} km)", callback_data=f"store:{s.store_id}")]
         for s in stores
     ]
-    await update.message.reply_text("Pick your dm store:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("Wähle deinen dm-Markt:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def cmd_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
     if not query:
         await update.message.reply_text(
-            "Usage: /store <PLZ or city>, e.g. /store 76133 — or send me a location."
+            "Verwendung: /store <PLZ oder Stadt>, z. B. /store 76133 — oder sende mir einen Standort."
         )
         return
     place = await get_api(context).geocode(query)
     if place is None:
-        await update.message.reply_text(f"Could not find '{query}'. Try a 5-digit PLZ or a city name.")
+        await update.message.reply_text(
+            f"'{query}' konnte nicht gefunden werden. Versuche eine 5-stellige PLZ oder einen Stadtnamen."
+        )
         return
     lat, lon, _ = place
     await _reply_store_choices(update, context, lat, lon)
@@ -122,11 +125,11 @@ async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
     if not query:
-        await update.message.reply_text("Usage: /search <product>, e.g. /search elmex zahnpasta")
+        await update.message.reply_text("Verwendung: /search <Produkt>, z. B. /search elmex zahnpasta")
         return
     products = await get_api(context).search_products(query)
     if not products:
-        await update.message.reply_text(f"No products found for '{query}'.")
+        await update.message.reply_text(f"Keine Produkte für '{query}' gefunden.")
         return
     titles = context.application.bot_data.setdefault("titles", {})
     lines = []
@@ -137,7 +140,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         while len(titles) > MAX_TITLE_CACHE:
             titles.pop(next(iter(titles)))
         lines.append(f"{i}. {product.name} (DAN {product.dan})")
-        keyboard.append([InlineKeyboardButton(f"🔔 Watch #{i}", callback_data=f"sub:{product.dan}")])
+        keyboard.append([InlineKeyboardButton(f"🔔 #{i} beobachten", callback_data=f"sub:{product.dan}")])
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -145,7 +148,7 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
     reply = update.effective_message.reply_text
     store = storage.get_store(chat_id)
     if store is None:
-        await reply("Please choose your dm store first: /store <PLZ or city>")
+        await reply("Bitte wähle zuerst deinen dm-Markt: /store <PLZ oder Stadt>")
         return
     store_id, store_name = store
 
@@ -153,8 +156,8 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
         storage.count_subscriptions(chat_id) >= MAX_SUBSCRIPTIONS_PER_CHAT
     ):
         await reply(
-            f"You can watch at most {MAX_SUBSCRIPTIONS_PER_CHAT} products. "
-            "Unsubscribe from something first with /list."
+            f"Du kannst höchstens {MAX_SUBSCRIPTIONS_PER_CHAT} Produkte beobachten. "
+            "Beende zuerst eine Beobachtung mit /list."
         )
         return
 
@@ -165,7 +168,7 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
         name = matches[0].name if matches else f"DAN {dan}"
 
     if not storage.add_subscription(chat_id, dan, name):
-        await reply(f"You are already watching {name}.")
+        await reply(f"Du beobachtest {name} bereits.")
         return
 
     # Seed the current state so the first poll doesn't notify
@@ -176,13 +179,13 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
         availability = None
     if availability is not None and availability.store_available is not None:
         storage.update_status(chat_id, dan, availability.store_available, availability.store_stock)
-    await reply(f"Watching {name} at {store_name}.\nCurrent status: {status_line(name, availability)}")
+    await reply(f"Beobachte {name} in {store_name}.\nAktueller Status: {status_line(name, availability)}")
 
 
 async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dan = parse_dan(context.args[0]) if len(context.args) == 1 else None
     if dan is None:
-        await update.message.reply_text("Usage: /subscribe <DAN> (the number shown by /search)")
+        await update.message.reply_text("Verwendung: /subscribe <DAN> (die von /search angezeigte Nummer)")
         return
     await _subscribe(update, context, update.effective_chat.id, dan)
 
@@ -190,12 +193,12 @@ async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dan = parse_dan(context.args[0]) if len(context.args) == 1 else None
     if dan is None:
-        await update.message.reply_text("Usage: /unsubscribe <DAN>")
+        await update.message.reply_text("Verwendung: /unsubscribe <DAN>")
         return
     if storage.remove_subscription(update.effective_chat.id, dan):
-        await update.message.reply_text(f"Stopped watching DAN {dan}.")
+        await update.message.reply_text(f"Beobachtung von DAN {dan} beendet.")
     else:
-        await update.message.reply_text(f"You are not watching DAN {dan}.")
+        await update.message.reply_text(f"Du beobachtest DAN {dan} nicht.")
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -203,21 +206,21 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store = storage.get_store(chat_id)
     subscriptions = storage.list_subscriptions(chat_id)
     if not subscriptions:
-        await update.message.reply_text("No subscriptions yet. Use /search to find products.")
+        await update.message.reply_text("Noch keine Abos. Nutze /search, um Produkte zu finden.")
         return
-    lines = [f"Your store: {store[1]}" if store else "No store chosen!", ""]
+    lines = [f"Dein Markt: {store[1]}" if store else "Kein Markt gewählt!", ""]
     keyboard = []
     for row in subscriptions:
         if row["last_available"] is None:
-            status = "❓ not checked yet"
+            status = "❓ noch nicht geprüft"
         elif row["last_available"]:
             stock = f" ({row['last_stock']}x)" if row["last_stock"] is not None else ""
-            status = f"✅ in stock{stock}"
+            status = f"✅ verfügbar{stock}"
         else:
-            status = "❌ not available"
+            status = "❌ nicht verfügbar"
         lines.append(f"{row['name']} — {status}")
         keyboard.append(
-            [InlineKeyboardButton(f"🗑 Stop watching {row['name'][:32]}", callback_data=f"unsub:{row['dan']}")]
+            [InlineKeyboardButton(f"🗑 {row['name'][:32]} nicht mehr beobachten", callback_data=f"unsub:{row['dan']}")]
         )
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -227,7 +230,9 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store = storage.get_store(chat_id)
     subscriptions = storage.list_subscriptions(chat_id)
     if store is None or not subscriptions:
-        await update.message.reply_text("Nothing to check — set a /store and /subscribe to products first.")
+        await update.message.reply_text(
+            "Nichts zu prüfen — lege zuerst mit /store einen Markt fest und abonniere mit /subscribe Produkte."
+        )
         return
     store_id, store_name = store
     dans = [row["dan"] for row in subscriptions]
@@ -253,15 +258,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "store":
         if not STORE_ID_RE.fullmatch(value):
-            await query.edit_message_text("Invalid store selection.")
+            await query.edit_message_text("Ungültige Marktauswahl.")
             return
         store = await get_api(context).get_store(value)
         if store is None:
-            await query.edit_message_text("Sorry, that store could not be found.")
+            await query.edit_message_text("Dieser Markt konnte leider nicht gefunden werden.")
             return
         storage.set_store(chat_id, store.store_id, store.name)
         await query.edit_message_text(
-            f"Your dm store is now: {store.name}\nUse /search to find and watch products."
+            f"Dein dm-Markt ist jetzt: {store.name}\nNutze /search, um Produkte zu finden und zu beobachten."
         )
     elif action == "sub":
         dan = parse_dan(value)
@@ -273,7 +278,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         removed = storage.remove_subscription(chat_id, dan)
         await query.edit_message_text(
-            f"Stopped watching DAN {dan}." if removed else f"You were not watching DAN {dan}."
+            f"Beobachtung von DAN {dan} beendet." if removed else f"Du hast DAN {dan} nicht beobachtet."
         )
 
 
@@ -298,9 +303,9 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 continue
             if change == "available":
                 stock = f" ({current.store_stock}x)" if current.store_stock is not None else ""
-                text = f"✅ {row['name']} is back in stock{stock} at {row['store_name']}!"
+                text = f"✅ {row['name']} ist wieder verfügbar{stock} in {row['store_name']}!"
             else:
-                text = f"❌ {row['name']} is no longer available at {row['store_name']}."
+                text = f"❌ {row['name']} ist nicht mehr verfügbar in {row['store_name']}."
             try:
                 await context.bot.send_message(chat_id=row["chat_id"], text=text)
             except Forbidden:
@@ -320,6 +325,8 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Error handling update", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message is not None:
         try:
-            await update.effective_message.reply_text("Sorry, something went wrong. Please try again.")
+            await update.effective_message.reply_text(
+                "Entschuldigung, etwas ist schiefgelaufen. Bitte versuche es erneut."
+            )
         except TelegramError:
             pass

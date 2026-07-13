@@ -102,7 +102,7 @@ class TestSubscriptionCap:
 
         assert storage.count_subscriptions(1) == MAX_SUBSCRIPTIONS_PER_CHAT
         assert storage.has_subscription(1, 999999) is False
-        assert any("at most" in t for t in sent)
+        assert any("höchstens" in t for t in sent)
 
 
 class TestCheckAllSubscriptions:
@@ -123,7 +123,7 @@ class TestCheckAllSubscriptions:
         assert len(context.bot.messages) == 1
         chat_id, text = context.bot.messages[0]
         assert chat_id == 1
-        assert "Zahnpasta" in text and "back in stock" in text and "11x" in text
+        assert "Zahnpasta" in text and "wieder verfügbar" in text and "11x" in text
 
         # State was persisted
         rows = {r["dan"]: r for r in storage.list_subscriptions(1)}
@@ -139,7 +139,7 @@ class TestCheckAllSubscriptions:
         await check_all_subscriptions(context)
 
         assert len(context.bot.messages) == 1
-        assert "no longer available" in context.bot.messages[0][1]
+        assert "nicht mehr verfügbar" in context.bot.messages[0][1]
 
     async def test_first_check_seeds_silently(self):
         storage.set_store(1, "D357", "Herne")

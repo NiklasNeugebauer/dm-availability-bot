@@ -6,7 +6,7 @@ dm-drogerie markt store and notifies you on changes.
 
 import logging
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -31,8 +31,20 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+BOT_COMMANDS = [
+    BotCommand("store", "deinen dm-Markt wählen (PLZ oder Stadt)"),
+    BotCommand("search", "dm-Produkte suchen"),
+    BotCommand("subscribe", "ein Produkt per DAN abonnieren"),
+    BotCommand("unsubscribe", "ein Produkt nicht mehr beobachten"),
+    BotCommand("list", "deine Abos und ihr Status"),
+    BotCommand("check", "Verfügbarkeit jetzt prüfen"),
+    BotCommand("help", "Hilfe anzeigen"),
+]
+
+
 async def _post_init(application: Application):
     application.bot_data["dm_api"] = DmApi()
+    await application.bot.set_my_commands(BOT_COMMANDS)
     logger.info("Bot started, checking availability every %d min", CHECK_INTERVAL_MINUTES)
 
 

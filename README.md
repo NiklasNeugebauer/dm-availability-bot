@@ -107,7 +107,7 @@ All configuration is via environment variables:
 | `DM_MIN_REQUEST_INTERVAL` | `2` | Minimum seconds between dm requests |
 | `STORE_SEARCH_RADIUS_KM` | `10` | Store search radius around a location |
 | `DB_PATH` | `data/bot.db` | SQLite database location |
-| `MAX_SUBSCRIPTIONS_PER_CHAT` | `40` | Max products a single chat may watch |
+| `MAX_SUBSCRIPTIONS_PER_CHAT` | `15` | Max products a single chat may watch |
 | `ALLOWED_CHAT_IDS` | — | Optional comma-separated chat-ID allowlist (empty = open to everyone) |
 
 ## Deployment
