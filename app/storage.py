@@ -132,3 +132,30 @@ def update_status(chat_id: int, dan: int, available: bool | None, stock: int | N
                 dan,
             ),
         )
+
+
+def update_status_cas(
+    chat_id: int, dan: int, available: bool | None, stock: int | None, expected: int | None
+) -> bool:
+    """Compare-and-swap: write only if last_available still equals ``expected``.
+
+    Guards against a stale-snapshot write: the periodic check reads a row, then
+    awaits dm for seconds; if the user switches store (resetting to NULL) or runs
+    /check in between, the row changed underneath and this write is skipped — the
+    row is simply reseeded next cycle. ``IS`` gives NULL-safe comparison in SQLite.
+    Returns True if a row was updated.
+    """
+    with contextlib.closing(_connect()) as conn, conn:
+        cursor = conn.execute(
+            "UPDATE subscriptions SET last_available=?, last_stock=?, updated_at=? "
+            "WHERE chat_id=? AND dan=? AND last_available IS ?",
+            (
+                None if available is None else int(available),
+                stock,
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                chat_id,
+                dan,
+                expected,
+            ),
+        )
+        return cursor.rowcount > 0

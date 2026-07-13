@@ -61,6 +61,21 @@ class TestSubscriptions:
         assert row["last_stock"] == 7
         assert row["updated_at"] is not None
 
+    def test_update_status_cas(self):
+        storage.add_subscription(1, 100, "Zahnpasta")  # last_available starts NULL
+
+        # Matching expected (NULL) writes.
+        assert storage.update_status_cas(1, 100, True, 3, expected=None) is True
+        assert storage.list_subscriptions(1)[0]["last_available"] == 1
+
+        # Stale expected (still None, but row is now 1) is skipped.
+        assert storage.update_status_cas(1, 100, False, 0, expected=None) is False
+        assert storage.list_subscriptions(1)[0]["last_available"] == 1
+
+        # Correct expected swaps.
+        assert storage.update_status_cas(1, 100, False, 0, expected=1) is True
+        assert storage.list_subscriptions(1)[0]["last_available"] == 0
+
     def test_grouped_by_store(self):
         storage.set_store(1, "D357", "Herne")
         storage.set_store(2, "D357", "Herne")

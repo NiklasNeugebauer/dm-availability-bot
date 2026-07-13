@@ -242,7 +242,11 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current = availability.get(row["dan"])
         lines.append(status_line(row["name"], current))
         if current is not None and current.store_available is not None:
-            storage.update_status(chat_id, row["dan"], current.store_available, current.store_stock)
+            # CAS on the snapshot value so a concurrent /store reset isn't clobbered.
+            storage.update_status_cas(
+                chat_id, row["dan"], current.store_available, current.store_stock,
+                expected=row["last_available"],
+            )
     await update.message.reply_text("\n".join(lines))
 
 
@@ -300,7 +304,10 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
             change = transition(row["last_available"], current.store_available)
             if change is None:
                 # Seeding or unchanged: no message to send, so persist immediately.
-                storage.update_status(row["chat_id"], row["dan"], current.store_available, current.store_stock)
+                storage.update_status_cas(
+                    row["chat_id"], row["dan"], current.store_available, current.store_stock,
+                    expected=row["last_available"],
+                )
                 continue
             if change == "available":
                 stock = f" ({current.store_stock}x)" if current.store_stock is not None else ""
@@ -320,7 +327,10 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 # Transient (flood control, network): leave state so we retry next cycle.
                 logger.exception("Failed to notify chat %s", row["chat_id"])
                 continue
-            storage.update_status(row["chat_id"], row["dan"], current.store_available, current.store_stock)
+            storage.update_status_cas(
+                row["chat_id"], row["dan"], current.store_available, current.store_stock,
+                expected=row["last_available"],
+            )
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
