@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import Forbidden, TelegramError
@@ -66,6 +67,24 @@ def transition(last_available: int | None, current: bool) -> str | None:
     if bool(last_available) == current:
         return None
     return "available" if current else "unavailable"
+
+
+def stale_note(updated_at: str | None) -> str:
+    """A hint for /list when a subscription hasn't been refreshed in ≥1 day.
+
+    Active products refresh every poll cycle, so a stale timestamp means dm
+    stopped returning the DAN (e.g. delisted) and the shown state is old.
+    """
+    if not updated_at:
+        return ""
+    try:
+        ts = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return ""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    days = (datetime.now(timezone.utc) - ts).days
+    return f" · zuletzt aktualisiert vor {days} Tag(en)" if days >= 1 else ""
 
 
 def status_line(name: str, availability: Availability | None) -> str:
@@ -218,7 +237,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = f"✅ verfügbar{stock}"
         else:
             status = "❌ nicht verfügbar"
-        lines.append(f"{row['name']} — {status}")
+        lines.append(f"{row['name']} — {status}{stale_note(row['updated_at'])}")
         keyboard.append(
             [InlineKeyboardButton(f"🗑 {row['name'][:32]} nicht mehr beobachten", callback_data=f"unsub:{row['dan']}")]
         )
@@ -297,6 +316,14 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             logger.exception("Availability check failed for store %s", store_id)
             continue
+        # Schema-drift canary: if we asked about DANs but got zero usable store
+        # rows back, dm likely changed the tile format and we'd silently go quiet.
+        if dans and not any(a.store_available is not None for a in availability.values()):
+            logger.warning(
+                "Store %s: no usable store availability for %d DAN(s) — dm schema may have changed",
+                store_id,
+                len(dans),
+            )
         for row in subscriptions:
             current = availability.get(row["dan"])
             if current is None or current.store_available is None:

@@ -1,10 +1,28 @@
 """Tests for transition logic and the periodic check job."""
 
+import logging
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app import storage
-from app.bot import check_all_subscriptions, parse_dan, status_line, transition
+from app.bot import check_all_subscriptions, parse_dan, stale_note, status_line, transition
 from app.dm_api import Availability
+
+
+class TestStaleNote:
+    def test_none_and_empty(self):
+        assert stale_note(None) == ""
+        assert stale_note("") == ""
+        assert stale_note("not-a-date") == ""
+
+    def test_recent_is_blank(self):
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        assert stale_note(now) == ""
+
+    def test_old_shows_days(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(timespec="seconds")
+        note = stale_note(old)
+        assert "vor 3 Tag" in note
 
 
 class TestParseDan:
@@ -181,6 +199,17 @@ class TestCheckAllSubscriptions:
         assert context.bot.messages == []
         # State unchanged
         assert storage.list_subscriptions(1)[0]["last_available"] == 0
+
+    async def test_schema_drift_canary_warns(self, caplog):
+        storage.set_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+
+        # API responds but with no usable store availability for any DAN.
+        context = make_context(FakeApi({100: Availability(100, None, None, True)}))
+        with caplog.at_level(logging.WARNING, logger="app.bot"):
+            await check_all_subscriptions(context)
+
+        assert any("schema may have changed" in r.message for r in caplog.records)
 
     async def test_missing_store_data_keeps_state(self):
         storage.set_store(1, "D357", "Herne")
