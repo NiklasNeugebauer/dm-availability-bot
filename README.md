@@ -19,7 +19,7 @@ Talk to the bot:
 | `/help` | Command overview |
 
 A background job polls the dm availability API every `CHECK_INTERVAL_MINUTES`
-(default 15) and sends a message whenever a watched product flips between
+(default 30) and sends a message whenever a watched product flips between
 available and unavailable at your store. The first check after subscribing
 only records the current state — you are notified on *changes*.
 
@@ -103,7 +103,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | — | **Required.** Bot token from @BotFather |
-| `CHECK_INTERVAL_MINUTES` | `15` | How often to poll availability |
+| `CHECK_INTERVAL_MINUTES` | `30` | How often to poll availability |
 | `DM_MIN_REQUEST_INTERVAL` | `2` | Minimum seconds between dm requests |
 | `DM_REQUEST_TIMEOUT` | `30` | Per-request timeout in seconds |
 | `STORE_SEARCH_RADIUS_KM` | `10` | Store search radius around a location |

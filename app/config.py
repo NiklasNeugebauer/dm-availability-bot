@@ -29,7 +29,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "dm-availability-bot/0.1 (personal availability watcher)"
 
 # Polling
-CHECK_INTERVAL_MINUTES = _env_int("CHECK_INTERVAL_MINUTES", 15)
+CHECK_INTERVAL_MINUTES = _env_int("CHECK_INTERVAL_MINUTES", 30)
 
 # Rate limiting: minimum seconds between requests to dm services
 DM_MIN_REQUEST_INTERVAL = _env_float("DM_MIN_REQUEST_INTERVAL", 2)
