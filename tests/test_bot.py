@@ -194,6 +194,26 @@ class TestCheckAllSubscriptions:
         assert context.bot.messages == []
         assert storage.list_subscriptions(1)[0]["last_available"] == 1
 
+    async def test_send_failure_does_not_advance_state(self):
+        from telegram.error import TelegramError
+
+        storage.set_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        storage.update_status(1, 100, False, 0)  # was out of stock -> would notify "available"
+
+        class FloodBot:
+            async def send_message(self, chat_id, text):
+                raise TelegramError("flood control exceeded")
+
+        context = make_context(FakeApi({100: Availability(100, True, 3, True)}))
+        context.bot = FloodBot()
+        await check_all_subscriptions(context)
+
+        # State must NOT advance, so the transition is retried next cycle.
+        row = storage.list_subscriptions(1)[0]
+        assert row["last_available"] == 0
+        assert row["last_stock"] == 0
+
     async def test_blocked_chat_is_pruned(self):
         from telegram.error import Forbidden
 

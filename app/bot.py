@@ -298,22 +298,29 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
             if current is None or current.store_available is None:
                 continue
             change = transition(row["last_available"], current.store_available)
-            storage.update_status(row["chat_id"], row["dan"], current.store_available, current.store_stock)
             if change is None:
+                # Seeding or unchanged: no message to send, so persist immediately.
+                storage.update_status(row["chat_id"], row["dan"], current.store_available, current.store_stock)
                 continue
             if change == "available":
                 stock = f" ({current.store_stock}x)" if current.store_stock is not None else ""
                 text = f"✅ {row['name']} ist wieder verfügbar{stock} in {row['store_name']}!"
             else:
                 text = f"❌ {row['name']} ist nicht mehr verfügbar in {row['store_name']}."
+            # Persist the transition only after a successful send: a transient send
+            # failure must not consume the change (the user would silently miss it).
             try:
                 await context.bot.send_message(chat_id=row["chat_id"], text=text)
             except Forbidden:
                 # User blocked the bot (or deleted the chat) — stop polling for them.
                 logger.info("Chat %s blocked the bot; removing its data", row["chat_id"])
                 storage.delete_chat(row["chat_id"])
+                continue
             except TelegramError:
+                # Transient (flood control, network): leave state so we retry next cycle.
                 logger.exception("Failed to notify chat %s", row["chat_id"])
+                continue
+            storage.update_status(row["chat_id"], row["dan"], current.store_available, current.store_stock)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
