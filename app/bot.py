@@ -26,6 +26,14 @@ STORE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,16}")
 # Shown when dm/geocoding is unreachable, so users can tell it apart from a bot bug.
 SERVICE_UNREACHABLE = "Der Dienst ist gerade nicht erreichbar. Bitte versuche es später erneut."
 
+# Inline-button text has no hard limit, but long labels get truncated by the client;
+# cap defensively so the shown label is always complete (with an ellipsis if cut).
+BUTTON_LABEL_MAX = 60
+
+
+def _button_label(name: str) -> str:
+    return name if len(name) <= BUTTON_LABEL_MAX else name[: BUTTON_LABEL_MAX - 1] + "…"
+
 
 def parse_dan(text: str) -> int | None:
     """Parse a dm article number from untrusted text, or None if invalid.
@@ -179,16 +187,19 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Keine Produkte für '{query}' gefunden.")
         return
     titles = context.application.bot_data.setdefault("titles", {})
-    lines = []
     keyboard = []
-    for i, product in enumerate(products, start=1):
+    for product in products:
         titles.pop(product.dan, None)  # re-insert at the end (bounded LRU-ish cache)
         titles[product.dan] = product.name
         while len(titles) > MAX_TITLE_CACHE:
             titles.pop(next(iter(titles)))
-        lines.append(f"{i}. {product.name} (DAN {product.dan})")
-        keyboard.append([InlineKeyboardButton(f"🔔 #{i} beobachten", callback_data=f"sub:{product.dan}")])
-    await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard.append(
+            [InlineKeyboardButton(f"🔔 {_button_label(product.name)}", callback_data=f"sub:{product.dan}")]
+        )
+    await update.message.reply_text(
+        f"Ergebnisse für '{query}' — zum Beobachten tippen:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
 
 async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, dan: int):

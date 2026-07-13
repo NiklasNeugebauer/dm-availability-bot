@@ -142,7 +142,20 @@ class TestCommands:
         ctx.args = ["zahnpasta"]
         await bot.cmd_search(update, ctx)
         assert ctx.application.bot_data["titles"][100] == "dontodent Zahnpasta"
-        assert any("DAN 100" in t for t in rec.texts)
+        # The product name is now the button label itself.
+        labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
+        assert any("dontodent Zahnpasta" in label for label in labels)
+
+    async def test_search_truncates_long_button_label(self):
+        long_name = "X" * 100
+        products = [Product(dan=100, brand="", title=long_name)]
+        ctx = make_ctx(HandlerApi(products=products))
+        update, rec = make_message_update()
+        ctx.args = ["x"]
+        await bot.cmd_search(update, ctx)
+        labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
+        assert labels[0].endswith("…")
+        assert len(labels[0]) <= bot.BUTTON_LABEL_MAX + 2  # "🔔 " prefix + capped label
 
     async def test_search_empty_query_usage(self):
         update, rec = make_message_update()
