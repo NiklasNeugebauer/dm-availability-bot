@@ -105,6 +105,7 @@ All configuration is via environment variables:
 | `TELEGRAM_BOT_TOKEN` | — | **Required.** Bot token from @BotFather |
 | `CHECK_INTERVAL_MINUTES` | `15` | How often to poll availability |
 | `DM_MIN_REQUEST_INTERVAL` | `2` | Minimum seconds between dm requests |
+| `DM_REQUEST_TIMEOUT` | `30` | Per-request timeout in seconds |
 | `STORE_SEARCH_RADIUS_KM` | `10` | Store search radius around a location |
 | `DB_PATH` | `data/bot.db` | SQLite database location |
 | `MAX_SUBSCRIPTIONS_PER_CHAT` | `15` | Max products a single chat may watch |

@@ -104,8 +104,12 @@ def status_line(name: str, availability: Availability | None) -> str:
         return f"❓ {name} — keine Marktdaten"
     if availability.store_available:
         stock = f" ({availability.store_stock}x)" if availability.store_stock is not None else ""
-        return f"✅ {name} — verfügbar{stock}"
-    return f"❌ {name} — nicht verfügbar"
+        line = f"✅ {name} — verfügbar{stock}"
+    else:
+        line = f"❌ {name} — nicht verfügbar"
+    if availability.online_available:
+        line += " · online verfügbar"
+    return line
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

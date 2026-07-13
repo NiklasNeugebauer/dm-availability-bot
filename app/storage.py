@@ -53,7 +53,7 @@ def set_store(chat_id: int, store_id: str, store_name: str):
 
 
 def get_store(chat_id: int) -> tuple[str, str] | None:
-    with contextlib.closing(_connect()) as conn, conn:
+    with contextlib.closing(_connect()) as conn:
         row = conn.execute("SELECT store_id, store_name FROM chats WHERE chat_id=?", (chat_id,)).fetchone()
     return (row["store_id"], row["store_name"]) if row else None
 
@@ -65,11 +65,11 @@ def add_subscription(chat_id: int, dan: int, name: str) -> bool:
             "INSERT OR IGNORE INTO subscriptions (chat_id, dan, name) VALUES (?, ?, ?)",
             (chat_id, dan, name),
         )
-    return cursor.rowcount > 0
+        return cursor.rowcount > 0
 
 
 def has_subscription(chat_id: int, dan: int) -> bool:
-    with contextlib.closing(_connect()) as conn, conn:
+    with contextlib.closing(_connect()) as conn:
         row = conn.execute(
             "SELECT 1 FROM subscriptions WHERE chat_id=? AND dan=?", (chat_id, dan)
         ).fetchone()
@@ -77,7 +77,7 @@ def has_subscription(chat_id: int, dan: int) -> bool:
 
 
 def count_subscriptions(chat_id: int) -> int:
-    with contextlib.closing(_connect()) as conn, conn:
+    with contextlib.closing(_connect()) as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM subscriptions WHERE chat_id=?", (chat_id,)
         ).fetchone()
@@ -94,11 +94,11 @@ def delete_chat(chat_id: int):
 def remove_subscription(chat_id: int, dan: int) -> bool:
     with contextlib.closing(_connect()) as conn, conn:
         cursor = conn.execute("DELETE FROM subscriptions WHERE chat_id=? AND dan=?", (chat_id, dan))
-    return cursor.rowcount > 0
+        return cursor.rowcount > 0
 
 
 def list_subscriptions(chat_id: int) -> list[sqlite3.Row]:
-    with contextlib.closing(_connect()) as conn, conn:
+    with contextlib.closing(_connect()) as conn:
         return conn.execute(
             "SELECT dan, name, last_available, last_stock, updated_at "
             "FROM subscriptions WHERE chat_id=? ORDER BY name",
@@ -108,7 +108,7 @@ def list_subscriptions(chat_id: int) -> list[sqlite3.Row]:
 
 def subscriptions_by_store() -> dict[str, list[sqlite3.Row]]:
     """All subscriptions grouped by the subscribing chat's store."""
-    with contextlib.closing(_connect()) as conn, conn:
+    with contextlib.closing(_connect()) as conn:
         rows = conn.execute(
             "SELECT c.store_id, c.store_name, s.chat_id, s.dan, s.name, s.last_available "
             "FROM subscriptions s JOIN chats c ON c.chat_id = s.chat_id"

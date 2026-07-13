@@ -35,7 +35,6 @@ STOCK_RE = re.compile(r"\((\d+)\)")
 @dataclass
 class Product:
     dan: int
-    gtin: int | None
     brand: str
     title: str
 
@@ -175,7 +174,6 @@ class DmApi:
             products.append(
                 Product(
                     dan=dan,
-                    gtin=item.get("gtin"),
                     brand=item.get("brandName", ""),
                     title=item.get("title", ""),
                 )

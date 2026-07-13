@@ -73,6 +73,10 @@ class TestStatusLine:
     def test_unknown(self):
         assert "❓" in status_line("Zahnpasta", None)
 
+    def test_online_suffix(self):
+        assert "online verfügbar" in status_line("Z", Availability(1, False, None, True))
+        assert "online verfügbar" not in status_line("Z", Availability(1, False, None, False))
+
 
 class FakeApi:
     def __init__(self, availability: dict[int, Availability]):

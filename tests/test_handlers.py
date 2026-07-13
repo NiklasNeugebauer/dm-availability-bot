@@ -136,7 +136,7 @@ class TestOnCallback:
 
 class TestCommands:
     async def test_search_populates_title_cache(self):
-        products = [Product(dan=100, gtin=None, brand="dontodent", title="Zahnpasta")]
+        products = [Product(dan=100, brand="dontodent", title="Zahnpasta")]
         ctx = make_ctx(HandlerApi(products=products))
         update, rec = make_message_update()
         ctx.args = ["zahnpasta"]
