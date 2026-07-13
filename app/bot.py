@@ -4,6 +4,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
+import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 # dm store IDs look like "D357"; validate before interpolating into a URL path.
 STORE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,16}")
+
+# Shown when dm/geocoding is unreachable, so users can tell it apart from a bot bug.
+SERVICE_UNREACHABLE = "Der Dienst ist gerade nicht erreichbar. Bitte versuche es später erneut."
 
 
 def parse_dan(text: str) -> int | None:
@@ -113,7 +117,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _reply_store_choices(update: Update, context: ContextTypes.DEFAULT_TYPE, lat: float, lon: float):
-    stores = await get_api(context).find_stores(lat, lon, STORE_SEARCH_RADIUS_KM)
+    try:
+        stores = await get_api(context).find_stores(lat, lon, STORE_SEARCH_RADIUS_KM)
+    except httpx.HTTPError:
+        await update.message.reply_text(SERVICE_UNREACHABLE)
+        return
     if not stores:
         await update.message.reply_text(
             f"Kein dm-Markt im Umkreis von {STORE_SEARCH_RADIUS_KM:.0f} km gefunden. "
@@ -134,7 +142,11 @@ async def cmd_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Verwendung: /store <PLZ oder Stadt>, z. B. /store 76133 — oder sende mir einen Standort."
         )
         return
-    place = await get_api(context).geocode(query)
+    try:
+        place = await get_api(context).geocode(query)
+    except httpx.HTTPError:
+        await update.message.reply_text(SERVICE_UNREACHABLE)
+        return
     if place is None:
         await update.message.reply_text(
             f"'{query}' konnte nicht gefunden werden. Versuche eine 5-stellige PLZ oder einen Stadtnamen."
@@ -154,7 +166,11 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         await update.message.reply_text("Verwendung: /search <Produkt>, z. B. /search elmex zahnpasta")
         return
-    products = await get_api(context).search_products(query)
+    try:
+        products = await get_api(context).search_products(query)
+    except httpx.HTTPError:
+        await update.message.reply_text(SERVICE_UNREACHABLE)
+        return
     if not products:
         await update.message.reply_text(f"Keine Produkte für '{query}' gefunden.")
         return
@@ -190,7 +206,10 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
 
     name = context.application.bot_data.get("titles", {}).get(dan)
     if name is None:
-        results = await get_api(context).search_products(str(dan), page_size=3)
+        try:
+            results = await get_api(context).search_products(str(dan), page_size=3)
+        except httpx.HTTPError:
+            results = []  # fall back to a plain DAN label; still let the user subscribe
         matches = [p for p in results if p.dan == dan]
         name = matches[0].name if matches else f"DAN {dan}"
 
@@ -263,7 +282,11 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     store_id, store_name = store
     dans = [row["dan"] for row in subscriptions]
-    availability = await get_api(context).get_availability(store_id, dans)
+    try:
+        availability = await get_api(context).get_availability(store_id, dans)
+    except httpx.HTTPError:
+        await update.message.reply_text(SERVICE_UNREACHABLE)
+        return
     lines = [f"{store_name}:"]
     for row in subscriptions:
         current = availability.get(row["dan"])
@@ -291,7 +314,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not STORE_ID_RE.fullmatch(value):
             await query.edit_message_text("Ungültige Marktauswahl.")
             return
-        store = await get_api(context).get_store(value)
+        try:
+            store = await get_api(context).get_store(value)
+        except httpx.HTTPError:
+            await query.edit_message_text(SERVICE_UNREACHABLE)
+            return
         if store is None:
             await query.edit_message_text("Dieser Markt konnte leider nicht gefunden werden.")
             return

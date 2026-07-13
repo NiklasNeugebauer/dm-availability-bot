@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from telegram.ext import ApplicationHandlerStop
 
@@ -162,6 +163,47 @@ class TestCommands:
         update, rec = make_message_update()
         await bot.cmd_list(update, make_ctx(HandlerApi()))
         assert any("Noch keine Abos" in t for t in rec.texts)
+
+
+class RaisingApi:
+    async def search_products(self, query, page_size=8):
+        raise httpx.ConnectError("boom")
+
+    async def find_stores(self, lat, lon, radius):
+        raise httpx.ConnectError("boom")
+
+    async def get_store(self, store_id):
+        raise httpx.ConnectError("boom")
+
+    async def get_availability(self, store_id, dans):
+        raise httpx.ConnectError("boom")
+
+    async def geocode(self, query):
+        raise httpx.ConnectError("boom")
+
+
+class TestServiceUnreachable:
+    async def test_search(self):
+        update, rec = make_message_update()
+        await bot.cmd_search(update, make_ctx(RaisingApi(), args=["x"]))
+        assert bot.SERVICE_UNREACHABLE in rec.texts
+
+    async def test_store_geocode(self):
+        update, rec = make_message_update()
+        await bot.cmd_store(update, make_ctx(RaisingApi(), args=["76133"]))
+        assert bot.SERVICE_UNREACHABLE in rec.texts
+
+    async def test_check(self):
+        storage.set_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        update, rec = make_message_update()
+        await bot.cmd_check(update, make_ctx(RaisingApi()))
+        assert bot.SERVICE_UNREACHABLE in rec.texts
+
+    async def test_callback_store(self):
+        update, rec = make_callback_update("store:D357")
+        await bot.on_callback(update, make_ctx(RaisingApi()))
+        assert bot.SERVICE_UNREACHABLE in rec.texts
 
 
 class TestEnforceAllowlist:
