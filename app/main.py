@@ -9,10 +9,8 @@ import logging
 from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
-    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
-    ContextTypes,
     MessageHandler,
     TypeHandler,
     filters,
@@ -71,11 +69,7 @@ def main():
     )
 
     if ALLOWED_CHAT_IDS:
-        async def _enforce_allowlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            if update.effective_chat is None or update.effective_chat.id not in ALLOWED_CHAT_IDS:
-                raise ApplicationHandlerStop
-
-        application.add_handler(TypeHandler(Update, _enforce_allowlist), group=-1)
+        application.add_handler(TypeHandler(Update, bot.enforce_allowlist), group=-1)
         logger.info("Restricting access to %d allowed chat(s)", len(ALLOWED_CHAT_IDS))
 
     application.add_handler(CommandHandler("start", bot.cmd_start))

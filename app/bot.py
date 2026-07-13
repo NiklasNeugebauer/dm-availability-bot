@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import Forbidden, TelegramError
-from telegram.ext import ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from app import storage
+from app import config, storage
 from app.config import (
     MAX_DAN,
     MAX_SUBSCRIPTIONS_PER_CHAT,
@@ -53,6 +53,14 @@ HELP_TEXT = (
 
 def get_api(context: ContextTypes.DEFAULT_TYPE) -> DmApi:
     return context.application.bot_data["dm_api"]
+
+
+async def enforce_allowlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Group -1 gate: drop updates from chats not on the allowlist (when one is set)."""
+    if config.ALLOWED_CHAT_IDS and (
+        update.effective_chat is None or update.effective_chat.id not in config.ALLOWED_CHAT_IDS
+    ):
+        raise ApplicationHandlerStop
 
 
 def transition(last_available: int | None, current: bool) -> str | None:

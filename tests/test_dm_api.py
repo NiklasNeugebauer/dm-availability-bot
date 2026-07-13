@@ -3,8 +3,43 @@
 import httpx
 import pytest
 
-from app.dm_api import DmApi, bbox_around, haversine_km, parse_tile
+from app.dm_api import DmApi, _parse_store, bbox_around, haversine_km, parse_tile
 from tests.conftest import make_tile
+
+
+class TestParseStore:
+    def test_valid(self):
+        store = _parse_store(
+            {
+                "storeId": "D357",
+                "address": {"street": "Hauptstr. 1", "zip": "44649", "city": "Herne"},
+                "location": {"lat": 51.5, "lon": 7.2},
+            }
+        )
+        assert store is not None
+        assert store.store_id == "D357"
+        assert store.city == "Herne"
+        assert (store.lat, store.lon) == (51.5, 7.2)
+
+    def test_missing_store_id_is_none(self):
+        assert _parse_store({"address": {"city": "Herne"}}) is None
+        assert _parse_store({}) is None
+
+    def test_bad_coords_coerced_to_zero(self):
+        store = _parse_store({"storeId": "D1", "location": {"lat": "n/a", "lon": None}})
+        assert store is not None
+        assert (store.lat, store.lon) == (0.0, 0.0)
+
+
+class TestGetStore:
+    async def test_get_store_returns_none_on_malformed(self, monkeypatch):
+        api = DmApi()
+
+        async def fake_get_json(url, params=None):
+            return {"no": "storeId"}
+
+        monkeypatch.setattr(api, "_get_json", fake_get_json)
+        assert await api.get_store("D999") is None
 
 
 class TestParseTile:
