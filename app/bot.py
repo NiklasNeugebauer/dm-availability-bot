@@ -195,15 +195,6 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
         return
     store_id, store_name = store
 
-    if not storage.has_subscription(chat_id, dan) and (
-        storage.count_subscriptions(chat_id) >= MAX_SUBSCRIPTIONS_PER_CHAT
-    ):
-        await reply(
-            f"Du kannst höchstens {MAX_SUBSCRIPTIONS_PER_CHAT} Produkte beobachten. "
-            "Beende zuerst eine Beobachtung mit /list."
-        )
-        return
-
     name = context.application.bot_data.get("titles", {}).get(dan)
     if name is None:
         try:
@@ -212,6 +203,17 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
             results = []  # fall back to a plain DAN label; still let the user subscribe
         matches = [p for p in results if p.dan == dan]
         name = matches[0].name if matches else f"DAN {dan}"
+
+    # Cap check and insert run with no await between them, so on the single-threaded
+    # event loop a double-tap can't slip past the limit.
+    if not storage.has_subscription(chat_id, dan) and (
+        storage.count_subscriptions(chat_id) >= MAX_SUBSCRIPTIONS_PER_CHAT
+    ):
+        await reply(
+            f"Du kannst höchstens {MAX_SUBSCRIPTIONS_PER_CHAT} Produkte beobachten. "
+            "Beende zuerst eine Beobachtung mit /list."
+        )
+        return
 
     if not storage.add_subscription(chat_id, dan, name):
         await reply(f"Du beobachtest {name} bereits.")
@@ -305,7 +307,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     # callback_data is attacker-controllable (a modified client can send anything);
     # validate every value before using it.
-    if not query.data:
+    if not query.data or query.message is None:  # message is None for very old buttons
         return
     action, _, value = query.data.partition(":")
     chat_id = query.message.chat.id
@@ -344,6 +346,7 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
     """Periodic job: poll availability per store and notify on changes."""
     api = get_api(context)
     grouped = storage.subscriptions_by_store()
+    pruned: set[int] = set()  # chats deleted mid-run (blocked the bot) — skip their other rows
     for store_id, subscriptions in grouped.items():
         dans = sorted({row["dan"] for row in subscriptions})
         try:
@@ -360,6 +363,8 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 len(dans),
             )
         for row in subscriptions:
+            if row["chat_id"] in pruned:
+                continue
             current = availability.get(row["dan"])
             if current is None or current.store_available is None:
                 continue
@@ -384,6 +389,7 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 # User blocked the bot (or deleted the chat) — stop polling for them.
                 logger.info("Chat %s blocked the bot; removing its data", row["chat_id"])
                 storage.delete_chat(row["chat_id"])
+                pruned.add(row["chat_id"])
                 continue
             except TelegramError:
                 # Transient (flood control, network): leave state so we retry next cycle.

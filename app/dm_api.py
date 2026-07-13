@@ -168,9 +168,13 @@ class DmApi:
         for item in data.get("products", []):
             if "dan" not in item:
                 continue
+            try:
+                dan = int(item["dan"])
+            except (TypeError, ValueError):
+                continue  # skip a malformed entry rather than failing the whole search
             products.append(
                 Product(
-                    dan=int(item["dan"]),
+                    dan=dan,
                     gtin=item.get("gtin"),
                     brand=item.get("brandName", ""),
                     title=item.get("title", ""),

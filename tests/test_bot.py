@@ -116,7 +116,9 @@ class TestSubscriptionCap:
             sent.append(text)
 
         update = SimpleNamespace(effective_message=SimpleNamespace(reply_text=reply))
-        await _subscribe(update, make_context(FakeApi({})), 1, 999999)
+        ctx = make_context(FakeApi({}))
+        ctx.application.bot_data["titles"] = {999999: "X"}  # cached name -> no API lookup
+        await _subscribe(update, ctx, 1, 999999)
 
         assert storage.count_subscriptions(1) == MAX_SUBSCRIPTIONS_PER_CHAT
         assert storage.has_subscription(1, 999999) is False
@@ -248,16 +250,26 @@ class TestCheckAllSubscriptions:
 
         storage.set_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
-        storage.update_status(1, 100, False, 0)  # was out of stock -> back in stock notifies
+        storage.add_subscription(1, 200, "Windeln")
+        storage.update_status(1, 100, False, 0)  # both were out of stock -> would notify
+        storage.update_status(1, 200, False, 0)
 
         class BlockingBot:
+            def __init__(self):
+                self.attempts = 0
+
             async def send_message(self, chat_id, text):
+                self.attempts += 1
                 raise Forbidden("bot was blocked by the user")
 
-        context = make_context(FakeApi({100: Availability(100, True, 3, True)}))
+        context = make_context(FakeApi({
+            100: Availability(100, True, 3, True),
+            200: Availability(200, True, 1, True),
+        }))
         context.bot = BlockingBot()
         await check_all_subscriptions(context)
 
-        # The chat's data is removed so we stop polling for it.
+        # First Forbidden prunes the chat; the second row is skipped (one attempt only).
+        assert context.bot.attempts == 1
         assert storage.get_store(1) is None
         assert storage.list_subscriptions(1) == []

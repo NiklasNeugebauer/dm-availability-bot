@@ -31,6 +31,24 @@ class TestParseStore:
         assert (store.lat, store.lon) == (0.0, 0.0)
 
 
+class TestSearchProducts:
+    async def test_skips_non_numeric_dan(self, monkeypatch):
+        api = DmApi()
+
+        async def fake_get_json(url, params=None):
+            return {
+                "products": [
+                    {"dan": "abc", "title": "bad"},
+                    {"dan": "100", "brandName": "b", "title": "good"},
+                    {"title": "no dan"},
+                ]
+            }
+
+        monkeypatch.setattr(api, "_get_json", fake_get_json)
+        products = await api.search_products("x")
+        assert [p.dan for p in products] == [100]
+
+
 class TestFindStores:
     async def test_filters_beyond_radius_and_sorts(self, monkeypatch):
         api = DmApi()

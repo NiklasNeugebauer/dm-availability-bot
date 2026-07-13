@@ -118,6 +118,13 @@ class TestOnCallback:
         await bot.on_callback(update, make_ctx(HandlerApi()))
         assert storage.count_subscriptions(1) == 0
 
+    async def test_message_none_returns_cleanly(self):
+        rec = Recorder()
+        query = SimpleNamespace(data="store:D357", answer=rec.answer, message=None)
+        update = SimpleNamespace(callback_query=query)
+        await bot.on_callback(update, make_ctx(HandlerApi(store=STORE)))  # must not raise
+        assert rec.texts == []
+
     async def test_unsub_removes(self):
         storage.set_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")

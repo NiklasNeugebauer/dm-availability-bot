@@ -84,10 +84,14 @@ def main():
     application.add_handler(MessageHandler(filters.LOCATION, bot.on_location))
     application.add_error_handler(bot.on_error)
 
+    # max_instances=1 (APScheduler's default, made explicit here): if a cycle runs
+    # longer than the interval — e.g. many distinct stores at the rate-limited pace —
+    # the next run is skipped rather than started concurrently.
     application.job_queue.run_repeating(
         bot.check_all_subscriptions,
         interval=CHECK_INTERVAL_MINUTES * 60,
         first=30,
+        job_kwargs={"max_instances": 1, "coalesce": True},
     )
 
     application.run_polling(allowed_updates=["message", "callback_query"])
