@@ -93,8 +93,8 @@ uv run python -m app.main
 uv run pytest tests/ -v
 ```
 
-38 tests covering tile parsing, geo helpers, rate limiting, persistence,
-and the notification logic. Tests run fully offline (mocked API).
+Tests cover tile parsing, geo helpers, rate limiting, persistence, the
+handlers, and the notification logic. They run fully offline (mocked API).
 
 ## Configuration
 

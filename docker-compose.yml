@@ -6,8 +6,8 @@ services:
       - bot_data:/app/data
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?set in .env}
-      - CHECK_INTERVAL_MINUTES=15
-      - DM_MIN_REQUEST_INTERVAL=2
+      - CHECK_INTERVAL_MINUTES=${CHECK_INTERVAL_MINUTES:-15}
+      - DM_MIN_REQUEST_INTERVAL=${DM_MIN_REQUEST_INTERVAL:-2}
     cap_drop:
       - ALL
     security_opt:
