@@ -199,6 +199,8 @@ class DmApi:
         stores = [store for s in data.get("stores", []) if (store := _parse_store(s))]
         for store in stores:
             store.distance_km = haversine_km(lat, lon, store.lat, store.lon)
+        # The bbox is a square, so drop corner stores beyond the circular radius.
+        stores = [s for s in stores if s.distance_km <= radius_km]
         stores.sort(key=lambda s: s.distance_km)
         return stores[:MAX_STORE_RESULTS]
 

@@ -31,6 +31,24 @@ class TestParseStore:
         assert (store.lat, store.lon) == (0.0, 0.0)
 
 
+class TestFindStores:
+    async def test_filters_beyond_radius_and_sorts(self, monkeypatch):
+        api = DmApi()
+
+        async def fake_get_json(url, params=None):
+            return {
+                "stores": [
+                    {"storeId": "F", "location": {"lat": 52.5, "lon": 7.2}},  # ~111 km
+                    {"storeId": "N", "location": {"lat": 51.5, "lon": 7.2}},  # 0 km
+                    {"storeId": "M", "location": {"lat": 51.55, "lon": 7.2}},  # ~5.5 km
+                ]
+            }
+
+        monkeypatch.setattr(api, "_get_json", fake_get_json)
+        stores = await api.find_stores(51.5, 7.2, 10)
+        assert [s.store_id for s in stores] == ["N", "M"]  # F dropped, sorted by distance
+
+
 class TestGetStore:
     async def test_get_store_returns_none_on_malformed(self, monkeypatch):
         api = DmApi()
