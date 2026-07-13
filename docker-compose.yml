@@ -1,0 +1,18 @@
+services:
+  dm-bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - bot_data:/app/data
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?set in .env}
+      - CHECK_INTERVAL_MINUTES=15
+      - DM_MIN_REQUEST_INTERVAL=2
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+
+volumes:
+  bot_data:
