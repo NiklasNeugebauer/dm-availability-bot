@@ -132,7 +132,8 @@ class TestOnCallback:
         update, rec = make_callback_update("unstore:D357")
         await bot.on_callback(update, make_ctx(HandlerApi()))
         assert storage.get_stores(1) == []
-        assert any("entfernt" in t for t in rec.texts)
+        # The button only shows a number, so the confirmation names the store.
+        assert any("Herne wurde entfernt" in t for t in rec.texts)
 
     async def test_unstore_unknown(self):
         update, rec = make_callback_update("unstore:D357")
@@ -166,7 +167,8 @@ class TestOnCallback:
         update, rec = make_callback_update("unsub:100")
         await bot.on_callback(update, make_ctx(HandlerApi()))
         assert storage.has_subscription(1, 100) is False
-        assert any("beendet" in t for t in rec.texts)
+        # The button only shows a number, so the confirmation names the product.
+        assert any("Beobachtung von Zahnpasta beendet" in t for t in rec.texts)
 
 
 class TestCommands:
@@ -177,20 +179,32 @@ class TestCommands:
         ctx.args = ["zahnpasta"]
         await bot.cmd_search(update, ctx)
         assert ctx.application.bot_data["titles"][100] == "dontodent Zahnpasta"
-        # The product name is now the button label itself.
+        # Full name and DAN live in the message text; the button is just a number.
+        assert "1. dontodent Zahnpasta (DAN 100)" in rec.texts[-1]
         labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
-        assert any("dontodent Zahnpasta" in label for label in labels)
+        assert labels == ["🔔 1"]
 
-    async def test_search_truncates_long_button_label(self):
+    async def test_search_long_names_never_truncated(self):
         long_name = "X" * 100
         products = [Product(dan=100, brand="", title=long_name)]
         ctx = make_ctx(HandlerApi(products=products))
         update, rec = make_message_update()
         ctx.args = ["x"]
         await bot.cmd_search(update, ctx)
+        assert long_name in rec.texts[-1]  # nothing cut off, no ellipsis
         labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
-        assert labels[0].endswith("…")
-        assert len(labels[0]) <= bot.BUTTON_LABEL_MAX + 2  # "🔔 " prefix + capped label
+        assert labels == ["🔔 1"]
+
+    async def test_search_buttons_wrap_into_rows(self):
+        products = [Product(dan=100 + i, brand="", title=f"P{i}") for i in range(8)]
+        ctx = make_ctx(HandlerApi(products=products))
+        update, rec = make_message_update()
+        ctx.args = ["p"]
+        await bot.cmd_search(update, ctx)
+        rows = rec.markups[-1].inline_keyboard
+        assert [len(row) for row in rows] == [4, 4]
+        assert rows[0][0].callback_data == "sub:100"
+        assert rows[1][3].callback_data == "sub:107"
 
     async def test_search_empty_query_usage(self):
         update, rec = make_message_update()

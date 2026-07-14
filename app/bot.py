@@ -27,13 +27,19 @@ STORE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,16}")
 # Shown when dm/geocoding is unreachable, so users can tell it apart from a bot bug.
 SERVICE_UNREACHABLE = "Der Dienst ist gerade nicht erreichbar. Bitte versuche es später erneut."
 
-# Inline-button text has no hard limit, but long labels get truncated by the client;
-# cap defensively so the shown label is always complete (with an ellipsis if cut).
-BUTTON_LABEL_MAX = 60
+# Telegram clients truncate long button labels, so buttons carry only a short
+# action + number ("🔔 2"); the full names live in the message text, numbered
+# to match.
+BUTTONS_PER_ROW = 4
 
 
-def _button_label(name: str) -> str:
-    return name if len(name) <= BUTTON_LABEL_MAX else name[: BUTTON_LABEL_MAX - 1] + "…"
+def _numbered_buttons(prefix: str, action: str, values: list) -> list[list[InlineKeyboardButton]]:
+    """Rows of short '<prefix> <n>' buttons whose callbacks carry the real values."""
+    buttons = [
+        InlineKeyboardButton(f"{prefix} {i}", callback_data=f"{action}:{value}")
+        for i, value in enumerate(values, start=1)
+    ]
+    return [buttons[i : i + BUTTONS_PER_ROW] for i in range(0, len(buttons), BUTTONS_PER_ROW)]
 
 
 def parse_dan(text: str) -> int | None:
@@ -144,13 +150,10 @@ async def _reply_store_choices(update: Update, context: ContextTypes.DEFAULT_TYP
             "Versuche einen anderen Ort."
         )
         return
-    keyboard = [
-        [InlineKeyboardButton(f"{s.name} ({s.distance_km:.1f} km)", callback_data=f"store:{s.store_id}")]
-        for s in stores
-    ]
-    await update.message.reply_text(
-        "Wähle einen dm-Markt zum Hinzufügen:", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    lines = ["Wähle einen dm-Markt zum Hinzufügen:", ""]
+    lines += [f"{i}. {s.name} ({s.distance_km:.1f} km)" for i, s in enumerate(stores, start=1)]
+    keyboard = _numbered_buttons("➕", "store", [s.store_id for s in stores])
+    await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 STORE_USAGE = "Verwendung: /store <PLZ oder Stadt>, z. B. /store 76133 — oder sende mir einen Standort."
@@ -163,12 +166,10 @@ async def cmd_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not stores:
             await update.message.reply_text(STORE_USAGE)
             return
-        keyboard = [
-            [InlineKeyboardButton(f"🗑 {s['store_name'][:48]} entfernen", callback_data=f"unstore:{s['store_id']}")]
-            for s in stores
-        ]
-        lines = ["Deine Märkte:"] + [f"📍 {s['store_name']}" for s in stores]
+        lines = ["Deine Märkte — tippe 🗑 zum Entfernen:", ""]
+        lines += [f"{i}. {s['store_name']}" for i, s in enumerate(stores, start=1)]
         lines += ["", STORE_USAGE]
+        keyboard = _numbered_buttons("🗑", "unstore", [s["store_id"] for s in stores])
         await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
         return
     try:
@@ -204,19 +205,15 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Keine Produkte für '{query}' gefunden.")
         return
     titles = context.application.bot_data.setdefault("titles", {})
-    keyboard = []
-    for product in products:
+    lines = [f"Ergebnisse für '{query}' — tippe 🔔 zum Beobachten:", ""]
+    for i, product in enumerate(products, start=1):
         titles.pop(product.dan, None)  # re-insert at the end (bounded LRU-ish cache)
         titles[product.dan] = product.name
         while len(titles) > MAX_TITLE_CACHE:
             titles.pop(next(iter(titles)))
-        keyboard.append(
-            [InlineKeyboardButton(f"🔔 {_button_label(product.name)}", callback_data=f"sub:{product.dan}")]
-        )
-    await update.message.reply_text(
-        f"Ergebnisse für '{query}' — zum Beobachten tippen:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+        lines.append(f"{i}. {product.name} (DAN {product.dan})")
+    keyboard = _numbered_buttons("🔔", "sub", [p.dan for p in products])
+    await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, dan: int):
@@ -279,8 +276,9 @@ async def cmd_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if dan is None:
         await update.message.reply_text("Verwendung: /unsubscribe <DAN>")
         return
+    name = storage.subscription_name(update.effective_chat.id, dan)
     if storage.remove_subscription(update.effective_chat.id, dan):
-        await update.message.reply_text(f"Beobachtung von DAN {dan} beendet.")
+        await update.message.reply_text(f"Beobachtung von {name or f'DAN {dan}'} beendet.")
     else:
         await update.message.reply_text(f"Du beobachtest DAN {dan} nicht.")
 
@@ -300,10 +298,12 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not subscriptions:
         await update.message.reply_text("Noch keine Abos. Nutze /search, um Produkte zu finden.")
         return
+    numbers = {row["dan"]: i for i, row in enumerate(subscriptions, start=1)}
     statuses = storage.list_statuses(chat_id)  # ordered by store, then product
     lines = []
     if not statuses:
-        lines = ["Kein Markt gewählt!", ""] + [row["name"] for row in subscriptions]
+        lines = ["Kein Markt gewählt!", ""]
+        lines += [f"{numbers[row['dan']]}. {row['name']}" for row in subscriptions]
     current_store = None
     for row in statuses:
         if row["store_name"] != current_store:
@@ -311,11 +311,11 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines.append("")
             lines.append(f"📍 {row['store_name']}")
             current_store = row["store_name"]
-        lines.append(f"{row['name']} — {_stored_status(row)}{stale_note(row['updated_at'])}")
-    keyboard = [
-        [InlineKeyboardButton(f"🗑 {row['name'][:32]} nicht mehr beobachten", callback_data=f"unsub:{row['dan']}")]
-        for row in subscriptions
-    ]
+        lines.append(
+            f"{numbers[row['dan']]}. {row['name']} — {_stored_status(row)}{stale_note(row['updated_at'])}"
+        )
+    lines += ["", "Tippe 🗑, um eine Beobachtung zu beenden."]
+    keyboard = _numbered_buttons("🗑", "unsub", [row["dan"] for row in subscriptions])
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -398,9 +398,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not STORE_ID_RE.fullmatch(value):
             await query.edit_message_text("Ungültige Marktauswahl.")
             return
+        names = {s["store_id"]: s["store_name"] for s in storage.get_stores(chat_id)}
         removed = storage.remove_store(chat_id, value)
         await query.edit_message_text(
-            "Der Markt wurde entfernt." if removed else "Dieser Markt war nicht in deiner Liste."
+            f"{names.get(value, 'Der Markt')} wurde entfernt."
+            if removed
+            else "Dieser Markt war nicht in deiner Liste."
         )
     elif action == "sub":
         dan = parse_dan(value)
@@ -410,9 +413,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dan = parse_dan(value)
         if dan is None:
             return
+        name = storage.subscription_name(chat_id, dan)
         removed = storage.remove_subscription(chat_id, dan)
         await query.edit_message_text(
-            f"Beobachtung von DAN {dan} beendet." if removed else f"Du hast DAN {dan} nicht beobachtet."
+            f"Beobachtung von {name or f'DAN {dan}'} beendet."
+            if removed
+            else f"Du hast DAN {dan} nicht beobachtet."
         )
 
 

@@ -161,6 +161,14 @@ def add_subscription(chat_id: int, dan: int, name: str) -> bool:
         return True
 
 
+def subscription_name(chat_id: int, dan: int) -> str | None:
+    with contextlib.closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT name FROM subscriptions WHERE chat_id=? AND dan=?", (chat_id, dan)
+        ).fetchone()
+    return row["name"] if row else None
+
+
 def has_subscription(chat_id: int, dan: int) -> bool:
     with contextlib.closing(_connect()) as conn:
         row = conn.execute(
