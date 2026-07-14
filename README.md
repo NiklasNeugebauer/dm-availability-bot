@@ -1,8 +1,10 @@
 # dm availability bot
 
 Telegram bot that watches product availability at your local
-**dm-drogerie markt** store and notifies you when a product comes back in
-stock or sells out.
+**dm-drogerie markt** stores and notifies you when a product comes back in
+stock or sells out. A chat can watch several stores at once — every
+subscribed product is checked at each of them, so you can see where a
+product is available right now.
 
 ## How it works
 
@@ -10,7 +12,8 @@ Talk to the bot:
 
 | Command | Description |
 |---------|-------------|
-| `/store <PLZ or city>` | Choose your dm store (or just share a location) |
+| `/store <PLZ or city>` | Add a dm store (or just share a location) |
+| `/store` | List your stores, remove with one tap |
 | `/search <query>` | Search dm products, subscribe with one tap |
 | `/subscribe <DAN>` | Watch a product by its dm article number |
 | `/unsubscribe <DAN>` | Stop watching a product |
@@ -20,8 +23,9 @@ Talk to the bot:
 
 A background job polls the dm availability API every `CHECK_INTERVAL_MINUTES`
 (default 30) and sends a message whenever a watched product flips between
-available and unavailable at your store. The first check after subscribing
-only records the current state — you are notified on *changes*.
+available and unavailable — one message per store, so you always know
+*where* it changed. The first check after subscribing (or after adding a
+store) only records the current state — you are notified on *changes*.
 
 ## Data sources
 
@@ -64,7 +68,7 @@ convenience bot, not a scraping farm.
 app/
   config.py      Environment-based configuration, service URLs
   dm_api.py      dm API client: search, stores, availability parsing, geocoding
-  storage.py     SQLite: chats (chosen store) + subscriptions + last state
+  storage.py     SQLite: stores per chat + subscriptions + per-store state
   bot.py         Telegram handlers + periodic availability check
   main.py        Entrypoint: application setup, handler registration, job queue
 tests/
@@ -109,6 +113,7 @@ All configuration is via environment variables:
 | `STORE_SEARCH_RADIUS_KM` | `10` | Store search radius around a location |
 | `DB_PATH` | `data/bot.db` | SQLite database location |
 | `MAX_SUBSCRIPTIONS_PER_CHAT` | `15` | Max products a single chat may watch |
+| `MAX_STORES_PER_CHAT` | `5` | Max stores a single chat may watch |
 | `ALLOWED_CHAT_IDS` | — | Optional comma-separated chat-ID allowlist (empty = open to everyone) |
 
 ## Deployment
@@ -119,8 +124,9 @@ docker compose up -d --build
 docker compose logs -f dm-bot
 ```
 
-The `bot_data` volume persists the SQLite database (your store choice and
-subscriptions) across rebuilds. The bot uses long polling — no inbound
+The `bot_data` volume persists the SQLite database (your stores and
+subscriptions) across rebuilds. Databases from the single-store version
+are migrated automatically on startup. The bot uses long polling — no inbound
 ports, reverse proxy, or public hostname needed.
 
 ## Disclaimer

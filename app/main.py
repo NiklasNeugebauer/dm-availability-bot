@@ -1,7 +1,7 @@
 """dm availability bot — entrypoint.
 
 Telegram bot that watches product availability at your local
-dm-drogerie markt store and notifies you on changes.
+dm-drogerie markt stores and notifies you on changes.
 """
 
 import logging
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 BOT_COMMANDS = [
-    BotCommand("store", "deinen dm-Markt wählen (PLZ oder Stadt)"),
+    BotCommand("store", "dm-Markt hinzufügen (PLZ oder Stadt) oder Märkte verwalten"),
     BotCommand("search", "dm-Produkte suchen"),
     BotCommand("subscribe", "ein Produkt per DAN abonnieren"),
     BotCommand("unsubscribe", "ein Produkt nicht mehr beobachten"),
