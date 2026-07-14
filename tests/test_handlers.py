@@ -179,10 +179,11 @@ class TestCommands:
         ctx.args = ["zahnpasta"]
         await bot.cmd_search(update, ctx)
         assert ctx.application.bot_data["titles"][100] == "dontodent Zahnpasta"
-        # Full name and DAN live in the message text; the button is just a number.
+        # Full name and DAN live in the message text; the button leads with the
+        # always-visible action + number and repeats the name.
         assert "1. dontodent Zahnpasta (DAN 100)" in rec.texts[-1]
         labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
-        assert labels == ["🔔 1"]
+        assert labels == ["🔔 1 · dontodent Zahnpasta"]
 
     async def test_search_long_names_never_truncated(self):
         long_name = "X" * 100
@@ -193,18 +194,20 @@ class TestCommands:
         await bot.cmd_search(update, ctx)
         assert long_name in rec.texts[-1]  # nothing cut off, no ellipsis
         labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
-        assert labels == ["🔔 1"]
+        # The client may cut the label visually, but we send it complete.
+        assert labels == [f"🔔 1 · {long_name}"]
 
-    async def test_search_buttons_wrap_into_rows(self):
+    async def test_search_one_numbered_button_per_result(self):
         products = [Product(dan=100 + i, brand="", title=f"P{i}") for i in range(8)]
         ctx = make_ctx(HandlerApi(products=products))
         update, rec = make_message_update()
         ctx.args = ["p"]
         await bot.cmd_search(update, ctx)
         rows = rec.markups[-1].inline_keyboard
-        assert [len(row) for row in rows] == [4, 4]
+        assert [len(row) for row in rows] == [1] * 8  # full width for readability
         assert rows[0][0].callback_data == "sub:100"
-        assert rows[1][3].callback_data == "sub:107"
+        assert rows[7][0].callback_data == "sub:107"
+        assert rows[7][0].text == "🔔 8 · P7"
 
     async def test_search_empty_query_usage(self):
         update, rec = make_message_update()

@@ -27,19 +27,17 @@ STORE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,16}")
 # Shown when dm/geocoding is unreachable, so users can tell it apart from a bot bug.
 SERVICE_UNREACHABLE = "Der Dienst ist gerade nicht erreichbar. Bitte versuche es später erneut."
 
-# Telegram clients truncate long button labels, so buttons carry only a short
-# action + number ("🔔 2"); the full names live in the message text, numbered
-# to match.
-BUTTONS_PER_ROW = 4
+def _numbered_buttons(prefix: str, action: str, items: list[tuple]) -> list[list[InlineKeyboardButton]]:
+    """One full-width '<prefix> <n> · <label>' button per (value, label) item.
 
-
-def _numbered_buttons(prefix: str, action: str, values: list) -> list[list[InlineKeyboardButton]]:
-    """Rows of short '<prefix> <n>' buttons whose callbacks carry the real values."""
-    buttons = [
-        InlineKeyboardButton(f"{prefix} {i}", callback_data=f"{action}:{value}")
-        for i, value in enumerate(values, start=1)
+    Telegram clients truncate labels that don't fit the screen, but the leading
+    action + number always stays visible and the complete text lives in the
+    numbered message above the keyboard — so nothing is ever lost.
+    """
+    return [
+        [InlineKeyboardButton(f"{prefix} {i} · {label}", callback_data=f"{action}:{value}")]
+        for i, (value, label) in enumerate(items, start=1)
     ]
-    return [buttons[i : i + BUTTONS_PER_ROW] for i in range(0, len(buttons), BUTTONS_PER_ROW)]
 
 
 def parse_dan(text: str) -> int | None:
@@ -152,7 +150,7 @@ async def _reply_store_choices(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     lines = ["Wähle einen dm-Markt zum Hinzufügen:", ""]
     lines += [f"{i}. {s.name} ({s.distance_km:.1f} km)" for i, s in enumerate(stores, start=1)]
-    keyboard = _numbered_buttons("➕", "store", [s.store_id for s in stores])
+    keyboard = _numbered_buttons("➕", "store", [(s.store_id, s.name) for s in stores])
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -169,7 +167,7 @@ async def cmd_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["Deine Märkte — tippe 🗑 zum Entfernen:", ""]
         lines += [f"{i}. {s['store_name']}" for i, s in enumerate(stores, start=1)]
         lines += ["", STORE_USAGE]
-        keyboard = _numbered_buttons("🗑", "unstore", [s["store_id"] for s in stores])
+        keyboard = _numbered_buttons("🗑", "unstore", [(s["store_id"], s["store_name"]) for s in stores])
         await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
         return
     try:
@@ -212,7 +210,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         while len(titles) > MAX_TITLE_CACHE:
             titles.pop(next(iter(titles)))
         lines.append(f"{i}. {product.name} (DAN {product.dan})")
-    keyboard = _numbered_buttons("🔔", "sub", [p.dan for p in products])
+    keyboard = _numbered_buttons("🔔", "sub", [(p.dan, p.name) for p in products])
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -315,7 +313,7 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{numbers[row['dan']]}. {row['name']} — {_stored_status(row)}{stale_note(row['updated_at'])}"
         )
     lines += ["", "Tippe 🗑, um eine Beobachtung zu beenden."]
-    keyboard = _numbered_buttons("🗑", "unsub", [row["dan"] for row in subscriptions])
+    keyboard = _numbered_buttons("🗑", "unsub", [(row["dan"], row["name"]) for row in subscriptions])
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
