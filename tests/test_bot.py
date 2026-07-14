@@ -110,7 +110,7 @@ class TestSubscriptionCap:
         from app.bot import _subscribe
         from app.config import MAX_SUBSCRIPTIONS_PER_CHAT
 
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         for dan in range(1000, 1000 + MAX_SUBSCRIPTIONS_PER_CHAT):
             storage.add_subscription(1, dan, f"P{dan}")
 
@@ -131,11 +131,11 @@ class TestSubscriptionCap:
 
 class TestCheckAllSubscriptions:
     async def test_notifies_on_change_only(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
         storage.add_subscription(1, 200, "Windeln")
-        storage.update_status(1, 100, False, 0)  # previously out of stock
-        storage.update_status(1, 200, True, 5)  # previously in stock, unchanged
+        storage.update_status(1, 100, "D357", False, 0)  # previously out of stock
+        storage.update_status(1, 200, "D357", True, 5)  # previously in stock, unchanged
 
         api = FakeApi({
             100: Availability(100, True, 11, True),
@@ -150,14 +150,14 @@ class TestCheckAllSubscriptions:
         assert "Zahnpasta" in text and "wieder verfügbar" in text and "11x" in text
 
         # State was persisted
-        rows = {r["dan"]: r for r in storage.list_subscriptions(1)}
+        rows = {r["dan"]: r for r in storage.list_statuses(1)}
         assert rows[100]["last_available"] == 1
         assert rows[200]["last_stock"] == 4
 
     async def test_notifies_on_becoming_unavailable(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
-        storage.update_status(1, 100, True, 3)
+        storage.update_status(1, 100, "D357", True, 3)
 
         context = make_context(FakeApi({100: Availability(100, False, None, True)}))
         await check_all_subscriptions(context)
@@ -166,18 +166,18 @@ class TestCheckAllSubscriptions:
         assert "nicht mehr verfügbar" in context.bot.messages[0][1]
 
     async def test_first_check_seeds_silently(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
 
         context = make_context(FakeApi({100: Availability(100, True, 2, True)}))
         await check_all_subscriptions(context)
 
         assert context.bot.messages == []
-        assert storage.list_subscriptions(1)[0]["last_available"] == 1
+        assert storage.list_statuses(1)[0]["last_available"] == 1
 
     async def test_one_request_per_store(self):
-        storage.set_store(1, "D357", "Herne")
-        storage.set_store(2, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(2, "D357", "Herne")
         storage.add_subscription(1, 100, "A")
         storage.add_subscription(2, 100, "A")
         storage.add_subscription(2, 200, "B")
@@ -190,10 +190,40 @@ class TestCheckAllSubscriptions:
 
         assert api.calls == [("D357", [100, 200])]
 
+    async def test_multi_store_chat_notified_per_store(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(1, "D999", "Bochum")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        storage.update_status(1, 100, "D357", False, 0)
+        storage.update_status(1, 100, "D999", False, 0)
+
+        api = FakeApi({100: Availability(100, True, 2, True)})
+        context = make_context(api)
+        await check_all_subscriptions(context)
+
+        # One request per store, one notification per store.
+        assert sorted(store for store, _ in api.calls) == ["D357", "D999"]
+        texts = [t for _, t in context.bot.messages]
+        assert len(texts) == 2
+        assert any("Herne" in t for t in texts) and any("Bochum" in t for t in texts)
+
+    async def test_newly_added_store_seeds_silently(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        storage.update_status(1, 100, "D357", True, 2)
+        storage.add_store(1, "D999", "Bochum")  # no state there yet
+
+        context = make_context(FakeApi({100: Availability(100, True, 2, True)}))
+        await check_all_subscriptions(context)
+
+        assert context.bot.messages == []
+        by_store = {r["store_id"]: r for r in storage.list_statuses(1)}
+        assert by_store["D999"]["last_available"] == 1
+
     async def test_api_failure_does_not_crash(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "A")
-        storage.update_status(1, 100, False, 0)
+        storage.update_status(1, 100, "D357", False, 0)
 
         class BrokenApi:
             async def get_availability(self, store_id, dans):
@@ -204,10 +234,10 @@ class TestCheckAllSubscriptions:
 
         assert context.bot.messages == []
         # State unchanged
-        assert storage.list_subscriptions(1)[0]["last_available"] == 0
+        assert storage.list_statuses(1)[0]["last_available"] == 0
 
     async def test_schema_drift_canary_warns(self, caplog):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
 
         # API responds but with no usable store availability for any DAN.
@@ -218,23 +248,23 @@ class TestCheckAllSubscriptions:
         assert any("schema may have changed" in r.message for r in caplog.records)
 
     async def test_missing_store_data_keeps_state(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "A")
-        storage.update_status(1, 100, True, 5)
+        storage.update_status(1, 100, "D357", True, 5)
 
         # API responds, but without store info for this DAN
         context = make_context(FakeApi({100: Availability(100, None, None, True)}))
         await check_all_subscriptions(context)
 
         assert context.bot.messages == []
-        assert storage.list_subscriptions(1)[0]["last_available"] == 1
+        assert storage.list_statuses(1)[0]["last_available"] == 1
 
     async def test_send_failure_does_not_advance_state(self):
         from telegram.error import TelegramError
 
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
-        storage.update_status(1, 100, False, 0)  # was out of stock -> would notify "available"
+        storage.update_status(1, 100, "D357", False, 0)  # was out of stock -> would notify "available"
 
         class FloodBot:
             async def send_message(self, chat_id, text):
@@ -245,18 +275,18 @@ class TestCheckAllSubscriptions:
         await check_all_subscriptions(context)
 
         # State must NOT advance, so the transition is retried next cycle.
-        row = storage.list_subscriptions(1)[0]
+        row = storage.list_statuses(1)[0]
         assert row["last_available"] == 0
         assert row["last_stock"] == 0
 
     async def test_blocked_chat_is_pruned(self):
         from telegram.error import Forbidden
 
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
         storage.add_subscription(1, 200, "Windeln")
-        storage.update_status(1, 100, False, 0)  # both were out of stock -> would notify
-        storage.update_status(1, 200, False, 0)
+        storage.update_status(1, 100, "D357", False, 0)  # both were out of stock -> would notify
+        storage.update_status(1, 200, "D357", False, 0)
 
         class BlockingBot:
             def __init__(self):
@@ -275,5 +305,5 @@ class TestCheckAllSubscriptions:
 
         # First Forbidden prunes the chat; the second row is skipped (one attempt only).
         assert context.bot.attempts == 1
-        assert storage.get_store(1) is None
+        assert storage.get_stores(1) == []
         assert storage.list_subscriptions(1) == []

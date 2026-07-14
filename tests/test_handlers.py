@@ -86,26 +86,61 @@ STORE = Store(store_id="D357", street="Hauptstr. 1", zip="44649", city="Herne", 
 
 
 class TestOnCallback:
-    async def test_store_valid_sets_store(self):
+    async def test_store_valid_adds_store(self):
         update, rec = make_callback_update("store:D357")
         await bot.on_callback(update, make_ctx(HandlerApi(store=STORE)))
-        assert storage.get_store(1) == ("D357", STORE.name)
-        assert any("Dein dm-Markt ist jetzt" in t for t in rec.texts)
+        assert [(r["store_id"], r["store_name"]) for r in storage.get_stores(1)] == [
+            ("D357", STORE.name)
+        ]
+        assert any("Hinzugefügt" in t for t in rec.texts)
+
+    async def test_store_second_add_keeps_first(self):
+        storage.add_store(1, "D111", "Bochum")
+        update, rec = make_callback_update("store:D357")
+        await bot.on_callback(update, make_ctx(HandlerApi(store=STORE)))
+        assert {r["store_id"] for r in storage.get_stores(1)} == {"D111", "D357"}
+
+    async def test_store_duplicate_add(self):
+        storage.add_store(1, "D357", STORE.name)
+        update, rec = make_callback_update("store:D357")
+        await bot.on_callback(update, make_ctx(HandlerApi(store=STORE)))
+        assert storage.count_stores(1) == 1
+        assert any("bereits" in t for t in rec.texts)
+
+    async def test_store_cap(self, monkeypatch):
+        monkeypatch.setattr("app.bot.MAX_STORES_PER_CHAT", 1)
+        storage.add_store(1, "D111", "Bochum")
+        update, rec = make_callback_update("store:D357")
+        await bot.on_callback(update, make_ctx(HandlerApi(store=STORE)))
+        assert storage.count_stores(1) == 1
+        assert any("höchstens" in t for t in rec.texts)
 
     async def test_store_invalid_id_rejected(self):
         update, rec = make_callback_update("store:not/a/valid id")
         await bot.on_callback(update, make_ctx(HandlerApi(store=STORE)))
-        assert storage.get_store(1) is None
+        assert storage.get_stores(1) == []
         assert any("Ungültige Marktauswahl" in t for t in rec.texts)
 
     async def test_store_not_found(self):
         update, rec = make_callback_update("store:D999")
         await bot.on_callback(update, make_ctx(HandlerApi(store=None)))
-        assert storage.get_store(1) is None
+        assert storage.get_stores(1) == []
         assert any("nicht gefunden" in t for t in rec.texts)
 
+    async def test_unstore_removes(self):
+        storage.add_store(1, "D357", "Herne")
+        update, rec = make_callback_update("unstore:D357")
+        await bot.on_callback(update, make_ctx(HandlerApi()))
+        assert storage.get_stores(1) == []
+        assert any("entfernt" in t for t in rec.texts)
+
+    async def test_unstore_unknown(self):
+        update, rec = make_callback_update("unstore:D357")
+        await bot.on_callback(update, make_ctx(HandlerApi()))
+        assert any("nicht in deiner Liste" in t for t in rec.texts)
+
     async def test_sub_adds_subscription(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         ctx = make_ctx(HandlerApi(availability={}))
         ctx.application.bot_data["titles"] = {100: "Zahnpasta"}
         update, rec = make_callback_update("sub:100")
@@ -113,7 +148,7 @@ class TestOnCallback:
         assert storage.has_subscription(1, 100) is True
 
     async def test_sub_invalid_dan_noop(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         update, rec = make_callback_update("sub:abc")
         await bot.on_callback(update, make_ctx(HandlerApi()))
         assert storage.count_subscriptions(1) == 0
@@ -126,7 +161,7 @@ class TestOnCallback:
         assert rec.texts == []
 
     async def test_unsub_removes(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
         update, rec = make_callback_update("unsub:100")
         await bot.on_callback(update, make_ctx(HandlerApi()))
@@ -166,13 +201,66 @@ class TestCommands:
         api = HandlerApi(geo=(51.5, 7.2, "Herne"), stores=[STORE])
         update, rec = make_message_update()
         await bot.cmd_store(update, make_ctx(api, args=["44649"]))
-        assert any("Wähle deinen dm-Markt" in t for t in rec.texts)
+        assert any("Wähle einen dm-Markt" in t for t in rec.texts)
         assert rec.markups[-1] is not None  # inline keyboard present
 
     async def test_store_not_geocodable(self):
         update, rec = make_message_update()
         await bot.cmd_store(update, make_ctx(HandlerApi(geo=None), args=["nirgendwo"]))
         assert any("konnte nicht gefunden werden" in t for t in rec.texts)
+
+    async def test_store_no_args_shows_usage_when_empty(self):
+        update, rec = make_message_update()
+        await bot.cmd_store(update, make_ctx(HandlerApi(), args=[]))
+        assert any("Verwendung" in t for t in rec.texts)
+        assert rec.markups[-1] is None  # nothing to remove yet
+
+    async def test_store_no_args_lists_stores_with_remove_buttons(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(1, "D123", "Bochum")
+        update, rec = make_message_update()
+        await bot.cmd_store(update, make_ctx(HandlerApi(), args=[]))
+        assert any("Herne" in t and "Bochum" in t for t in rec.texts)
+        buttons = [btn for row in rec.markups[-1].inline_keyboard for btn in row]
+        assert {btn.callback_data for btn in buttons} == {"unstore:D357", "unstore:D123"}
+
+    async def test_list_groups_by_store(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(1, "D123", "Bochum")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        storage.update_status(1, 100, "D357", True, 3)
+        update, rec = make_message_update()
+        await bot.cmd_list(update, make_ctx(HandlerApi()))
+        text = rec.texts[-1]
+        assert "📍 Herne" in text and "📍 Bochum" in text
+        assert "✅ verfügbar (3x)" in text and "❓ noch nicht geprüft" in text
+        # One unsubscribe button per product, not per store.
+        assert len(rec.markups[-1].inline_keyboard) == 1
+
+    async def test_check_queries_every_store(self):
+        from app.dm_api import Availability
+
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(1, "D123", "Bochum")
+        storage.add_subscription(1, 100, "Zahnpasta")
+
+        calls = []
+
+        class MultiStoreApi(HandlerApi):
+            async def get_availability(self, store_id, dans):
+                calls.append(store_id)
+                return {100: Availability(100, store_id == "D357", 2, False)}
+
+        update, rec = make_message_update()
+        await bot.cmd_check(update, make_ctx(MultiStoreApi()))
+        assert sorted(calls) == ["D123", "D357"]
+        text = rec.texts[-1]
+        assert "Herne:" in text and "Bochum:" in text
+        assert "✅" in text and "❌" in text
+        # The check also persisted per-store state.
+        by_store = {r["store_id"]: r for r in storage.list_statuses(1)}
+        assert by_store["D357"]["last_available"] == 1
+        assert by_store["D123"]["last_available"] == 0
 
     async def test_check_without_setup(self):
         update, rec = make_message_update()
@@ -214,7 +302,7 @@ class TestServiceUnreachable:
         assert bot.SERVICE_UNREACHABLE in rec.texts
 
     async def test_check(self):
-        storage.set_store(1, "D357", "Herne")
+        storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
         update, rec = make_message_update()
         await bot.cmd_check(update, make_ctx(RaisingApi()))

@@ -12,6 +12,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 from app import config, storage
 from app.config import (
     MAX_DAN,
+    MAX_STORES_PER_CHAT,
     MAX_SUBSCRIPTIONS_PER_CHAT,
     MAX_TITLE_CACHE,
     STORE_SEARCH_RADIUS_KM,
@@ -47,13 +48,16 @@ def parse_dan(text: str) -> int | None:
     return dan if 0 < dan < MAX_DAN else None
 
 HELP_TEXT = (
-    "Ich beobachte die Produktverfügbarkeit in deinem dm-Markt und "
+    "Ich beobachte die Produktverfügbarkeit in deinen dm-Märkten und "
     "benachrichtige dich, wenn etwas wieder verfügbar ist oder ausverkauft wird.\n\n"
     "Einrichtung:\n"
-    "1. /store <PLZ oder Stadt> — wähle deinen dm-Markt (oder sende mir einfach einen Standort)\n"
+    "1. /store <PLZ oder Stadt> — füge einen oder mehrere dm-Märkte hinzu "
+    "(oder sende mir einfach einen Standort)\n"
     "2. /search <Produkt> — finde Produkte und abonniere mit einem Tippen\n\n"
+    "Jedes beobachtete Produkt wird an allen deinen Märkten geprüft.\n\n"
     "Befehle:\n"
-    "/store <PLZ|Stadt> — deinen dm-Markt wählen\n"
+    "/store <PLZ|Stadt> — einen dm-Markt hinzufügen\n"
+    "/store — deine Märkte anzeigen und entfernen\n"
     "/search <Suchbegriff> — dm-Produkte suchen\n"
     "/subscribe <DAN> — ein Produkt über seine dm-Artikelnummer abonnieren\n"
     "/unsubscribe <DAN> — ein Produkt nicht mehr beobachten\n"
@@ -79,8 +83,8 @@ def transition(last_available: int | None, current: bool) -> str | None:
     """Compare stored state with the current one.
 
     Returns "available" / "unavailable" on a change, None otherwise.
-    The first check after subscribing (or switching store) only seeds the
-    state and never notifies.
+    The first check after subscribing (or at a newly added store) only
+    seeds the state and never notifies.
     """
     if last_available is None:
         return None
@@ -144,15 +148,28 @@ async def _reply_store_choices(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton(f"{s.name} ({s.distance_km:.1f} km)", callback_data=f"store:{s.store_id}")]
         for s in stores
     ]
-    await update.message.reply_text("Wähle deinen dm-Markt:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        "Wähle einen dm-Markt zum Hinzufügen:", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+STORE_USAGE = "Verwendung: /store <PLZ oder Stadt>, z. B. /store 76133 — oder sende mir einen Standort."
 
 
 async def cmd_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = " ".join(context.args)
     if not query:
-        await update.message.reply_text(
-            "Verwendung: /store <PLZ oder Stadt>, z. B. /store 76133 — oder sende mir einen Standort."
-        )
+        stores = storage.get_stores(update.effective_chat.id)
+        if not stores:
+            await update.message.reply_text(STORE_USAGE)
+            return
+        keyboard = [
+            [InlineKeyboardButton(f"🗑 {s['store_name'][:48]} entfernen", callback_data=f"unstore:{s['store_id']}")]
+            for s in stores
+        ]
+        lines = ["Deine Märkte:"] + [f"📍 {s['store_name']}" for s in stores]
+        lines += ["", STORE_USAGE]
+        await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
         return
     try:
         place = await get_api(context).geocode(query)
@@ -204,11 +221,10 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, dan: int):
     reply = update.effective_message.reply_text
-    store = storage.get_store(chat_id)
-    if store is None:
-        await reply("Bitte wähle zuerst deinen dm-Markt: /store <PLZ oder Stadt>")
+    stores = storage.get_stores(chat_id)
+    if not stores:
+        await reply("Bitte füge zuerst einen dm-Markt hinzu: /store <PLZ oder Stadt>")
         return
-    store_id, store_name = store
 
     name = context.application.bot_data.get("titles", {}).get(dan)
     if name is None:
@@ -234,15 +250,20 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
         await reply(f"Du beobachtest {name} bereits.")
         return
 
-    # Seed the current state so the first poll doesn't notify
-    try:
-        availability = (await get_api(context).get_availability(store_id, [dan])).get(dan)
-    except Exception:
-        logger.exception("Initial availability check failed for DAN %s", dan)
-        availability = None
-    if availability is not None and availability.store_available is not None:
-        storage.update_status(chat_id, dan, availability.store_available, availability.store_stock)
-    await reply(f"Beobachte {name} in {store_name}.\nAktueller Status: {status_line(name, availability)}")
+    # Seed the current state at every store so the first poll doesn't notify
+    lines = [f"Beobachte {name}.", "Aktueller Status:"]
+    for store in stores:
+        try:
+            availability = (await get_api(context).get_availability(store["store_id"], [dan])).get(dan)
+        except Exception:
+            logger.exception("Initial availability check failed for DAN %s", dan)
+            availability = None
+        if availability is not None and availability.store_available is not None:
+            storage.update_status(
+                chat_id, dan, store["store_id"], availability.store_available, availability.store_stock
+            )
+        lines.append(status_line(store["store_name"], availability))
+    await reply("\n".join(lines))
 
 
 async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -264,56 +285,74 @@ async def cmd_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Du beobachtest DAN {dan} nicht.")
 
 
+def _stored_status(row) -> str:
+    if row["last_available"] is None:
+        return "❓ noch nicht geprüft"
+    if row["last_available"]:
+        stock = f" ({row['last_stock']}x)" if row["last_stock"] is not None else ""
+        return f"✅ verfügbar{stock}"
+    return "❌ nicht verfügbar"
+
+
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    store = storage.get_store(chat_id)
     subscriptions = storage.list_subscriptions(chat_id)
     if not subscriptions:
         await update.message.reply_text("Noch keine Abos. Nutze /search, um Produkte zu finden.")
         return
-    lines = [f"Dein Markt: {store[1]}" if store else "Kein Markt gewählt!", ""]
-    keyboard = []
-    for row in subscriptions:
-        if row["last_available"] is None:
-            status = "❓ noch nicht geprüft"
-        elif row["last_available"]:
-            stock = f" ({row['last_stock']}x)" if row["last_stock"] is not None else ""
-            status = f"✅ verfügbar{stock}"
-        else:
-            status = "❌ nicht verfügbar"
-        lines.append(f"{row['name']} — {status}{stale_note(row['updated_at'])}")
-        keyboard.append(
-            [InlineKeyboardButton(f"🗑 {row['name'][:32]} nicht mehr beobachten", callback_data=f"unsub:{row['dan']}")]
-        )
+    statuses = storage.list_statuses(chat_id)  # ordered by store, then product
+    lines = []
+    if not statuses:
+        lines = ["Kein Markt gewählt!", ""] + [row["name"] for row in subscriptions]
+    current_store = None
+    for row in statuses:
+        if row["store_name"] != current_store:
+            if current_store is not None:
+                lines.append("")
+            lines.append(f"📍 {row['store_name']}")
+            current_store = row["store_name"]
+        lines.append(f"{row['name']} — {_stored_status(row)}{stale_note(row['updated_at'])}")
+    keyboard = [
+        [InlineKeyboardButton(f"🗑 {row['name'][:32]} nicht mehr beobachten", callback_data=f"unsub:{row['dan']}")]
+        for row in subscriptions
+    ]
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    store = storage.get_store(chat_id)
+    stores = storage.get_stores(chat_id)
     subscriptions = storage.list_subscriptions(chat_id)
-    if store is None or not subscriptions:
+    if not stores or not subscriptions:
         await update.message.reply_text(
             "Nichts zu prüfen — lege zuerst mit /store einen Markt fest und abonniere mit /subscribe Produkte."
         )
         return
-    store_id, store_name = store
     dans = [row["dan"] for row in subscriptions]
-    try:
-        availability = await get_api(context).get_availability(store_id, dans)
-    except httpx.HTTPError:
-        await update.message.reply_text(SERVICE_UNREACHABLE)
-        return
-    lines = [f"{store_name}:"]
-    for row in subscriptions:
-        current = availability.get(row["dan"])
-        lines.append(status_line(row["name"], current))
-        if current is not None and current.store_available is not None:
-            # CAS on the snapshot value so a concurrent /store reset isn't clobbered.
-            storage.update_status_cas(
-                chat_id, row["dan"], current.store_available, current.store_stock,
-                expected=row["last_available"],
-            )
+    # Snapshot of the stored states, used as the CAS expectation below.
+    snapshot = {
+        (row["store_id"], row["dan"]): row["last_available"] for row in storage.list_statuses(chat_id)
+    }
+    lines = []
+    for store in stores:
+        try:
+            availability = await get_api(context).get_availability(store["store_id"], dans)
+        except httpx.HTTPError:
+            await update.message.reply_text(SERVICE_UNREACHABLE)
+            return
+        if lines:
+            lines.append("")
+        lines.append(f"{store['store_name']}:")
+        for row in subscriptions:
+            current = availability.get(row["dan"])
+            lines.append(status_line(row["name"], current))
+            if current is not None and current.store_available is not None:
+                # CAS on the snapshot value so a concurrent store removal/re-add isn't clobbered.
+                storage.update_status_cas(
+                    chat_id, row["dan"], store["store_id"],
+                    current.store_available, current.store_stock,
+                    expected=snapshot.get((store["store_id"], row["dan"])),
+                )
     await update.message.reply_text("\n".join(lines))
 
 
@@ -339,9 +378,29 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if store is None:
             await query.edit_message_text("Dieser Markt konnte leider nicht gefunden werden.")
             return
-        storage.set_store(chat_id, store.store_id, store.name)
+        # Cap check and insert run with no await between them (double-tap safe).
+        if storage.has_store(chat_id, store.store_id):
+            await query.edit_message_text(f"{store.name} ist bereits einer deiner Märkte.")
+            return
+        if storage.count_stores(chat_id) >= MAX_STORES_PER_CHAT:
+            await query.edit_message_text(
+                f"Du kannst höchstens {MAX_STORES_PER_CHAT} Märkte beobachten. "
+                "Entferne zuerst einen mit /store."
+            )
+            return
+        storage.add_store(chat_id, store.store_id, store.name)
         await query.edit_message_text(
-            f"Dein dm-Markt ist jetzt: {store.name}\nNutze /search, um Produkte zu finden und zu beobachten."
+            f"Hinzugefügt: {store.name}\n"
+            "Deine beobachteten Produkte werden dort ab jetzt mitgeprüft. "
+            "Nutze /search, um Produkte zu finden, oder /store, um deine Märkte zu verwalten."
+        )
+    elif action == "unstore":
+        if not STORE_ID_RE.fullmatch(value):
+            await query.edit_message_text("Ungültige Marktauswahl.")
+            return
+        removed = storage.remove_store(chat_id, value)
+        await query.edit_message_text(
+            "Der Markt wurde entfernt." if removed else "Dieser Markt war nicht in deiner Liste."
         )
     elif action == "sub":
         dan = parse_dan(value)
@@ -387,7 +446,8 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
             if change is None:
                 # Seeding or unchanged: no message to send, so persist immediately.
                 storage.update_status_cas(
-                    row["chat_id"], row["dan"], current.store_available, current.store_stock,
+                    row["chat_id"], row["dan"], store_id,
+                    current.store_available, current.store_stock,
                     expected=row["last_available"],
                 )
                 continue
@@ -411,7 +471,8 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 logger.exception("Failed to notify chat %s", row["chat_id"])
                 continue
             storage.update_status_cas(
-                row["chat_id"], row["dan"], current.store_available, current.store_stock,
+                row["chat_id"], row["dan"], store_id,
+                current.store_available, current.store_stock,
                 expected=row["last_available"],
             )
 
