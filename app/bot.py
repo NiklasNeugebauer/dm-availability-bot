@@ -209,7 +209,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         titles[product.dan] = product.name
         while len(titles) > MAX_TITLE_CACHE:
             titles.pop(next(iter(titles)))
-        lines.append(f"{i}. {product.name} (DAN {product.dan})")
+        lines.append(f"{i}. {product.name}")
     keyboard = _numbered_buttons("🔔", "sub", [(p.dan, p.name) for p in products])
     await update.message.reply_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -264,7 +264,7 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
 async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dan = parse_dan(context.args[0]) if len(context.args) == 1 else None
     if dan is None:
-        await update.message.reply_text("Verwendung: /subscribe <DAN> (die von /search angezeigte Nummer)")
+        await update.message.reply_text("Verwendung: /subscribe <DAN> — die dm-Artikelnummer des Produkts.")
         return
     await _subscribe(update, context, update.effective_chat.id, dan)
 

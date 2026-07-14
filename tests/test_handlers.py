@@ -179,9 +179,9 @@ class TestCommands:
         ctx.args = ["zahnpasta"]
         await bot.cmd_search(update, ctx)
         assert ctx.application.bot_data["titles"][100] == "dontodent Zahnpasta"
-        # Full name and DAN live in the message text; the button leads with the
+        # The full name lives in the message text; the button leads with the
         # always-visible action + number and repeats the name.
-        assert "1. dontodent Zahnpasta (DAN 100)" in rec.texts[-1]
+        assert "1. dontodent Zahnpasta" in rec.texts[-1]
         labels = [btn.text for row in rec.markups[-1].inline_keyboard for btn in row]
         assert labels == ["🔔 1 · dontodent Zahnpasta"]
 
