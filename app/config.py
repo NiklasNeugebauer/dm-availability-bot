@@ -19,7 +19,7 @@ def _env_float(name: str, default: float) -> float:
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 # dm API endpoints (reverse-engineered from www.dm.de, may change without notice)
-DM_AVAILABILITY_URL = "https://products.dm.de/availability/api/v1/tiles/DE/{dans}"
+DM_AVAILABILITY_URL = "https://products.dm.de/availability/api/v2/tiles/DE/{dans}"
 DM_PRODUCT_SEARCH_URL = "https://product-search.services.dmtech.com/de/search"
 DM_STORE_BBOX_URL = "https://store-data-service.services.dmtech.com/stores/bbox/{nw_lat},{nw_lon},{se_lat},{se_lon}"
 DM_STORE_ITEM_URL = "https://store-data-service.services.dmtech.com/stores/item/{store_id}"
@@ -30,6 +30,9 @@ USER_AGENT = "dm-availability-bot/0.1 (personal availability watcher)"
 
 # Polling
 CHECK_INTERVAL_MINUTES = _env_int("CHECK_INTERVAL_MINUTES", 30)
+
+# Consecutive failed poll cycles at a store before its watchers are warned
+OUTAGE_NOTIFY_AFTER_CYCLES = _env_int("OUTAGE_NOTIFY_AFTER_CYCLES", 3)
 
 # Rate limiting: minimum seconds between requests to dm services
 DM_MIN_REQUEST_INTERVAL = _env_float("DM_MIN_REQUEST_INTERVAL", 2)
