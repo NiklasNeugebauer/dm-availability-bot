@@ -27,6 +27,9 @@ available and unavailable — one message per store, so you always know
 *where* it changed. The first check after subscribing (or after adding a
 store) only records the current state — you are notified on *changes*.
 
+If the check keeps failing for one of your stores, the bot says so once, with
+the cause, and again when it works — a silent bot means nothing changed.
+
 ## Data sources
 
 The bot talks to dm's public but **undocumented** web services (the same ones
@@ -35,7 +38,7 @@ www.dm.de uses). They may change without notice — they have before.
 | Service | Endpoint |
 |---------|----------|
 | Product search | `https://product-search.services.dmtech.com/de/search?query=…` |
-| Store availability | `https://products.dm.de/availability/api/v1/tiles/DE/{dans}?pickupStoreId={storeId}` |
+| Store availability | `https://products.dm.de/availability/api/v2/tiles/DE/{dans}?pickupStoreId={storeId}` |
 | Store finder | `https://store-data-service.services.dmtech.com/stores/bbox/{nw},{se}` |
 | Store details | `https://store-data-service.services.dmtech.com/stores/item/{storeId}` |
 | Geocoding (PLZ/city) | `https://nominatim.openstreetmap.org/search` |
@@ -108,6 +111,7 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | — | **Required.** Bot token from @BotFather |
 | `CHECK_INTERVAL_MINUTES` | `30` | How often to poll availability |
+| `OUTAGE_NOTIFY_AFTER_CYCLES` | `3` | Failed polls in a row at a store before its watchers are warned |
 | `DM_MIN_REQUEST_INTERVAL` | `2` | Minimum seconds between dm requests |
 | `DM_REQUEST_TIMEOUT` | `30` | Per-request timeout in seconds |
 | `STORE_SEARCH_RADIUS_KM` | `10` | Store search radius around a location |

@@ -6,7 +6,7 @@ import httpx
 import pytest
 from telegram.ext import ApplicationHandlerStop
 
-from app import bot, storage
+from app import bot, config, storage
 from app.dm_api import Product, Store
 
 
@@ -290,45 +290,108 @@ class TestCommands:
         assert any("Noch keine Abos" in t for t in rec.texts)
 
 
+def status_error(code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://example.invalid/x")
+    return httpx.HTTPStatusError("boom", request=request, response=httpx.Response(code, request=request))
+
+
 class RaisingApi:
+    def __init__(self, exc: Exception | None = None):
+        self.exc = exc or httpx.ConnectError("boom")
+
     async def search_products(self, query, page_size=8):
-        raise httpx.ConnectError("boom")
+        raise self.exc
 
     async def find_stores(self, lat, lon, radius):
-        raise httpx.ConnectError("boom")
+        raise self.exc
 
     async def get_store(self, store_id):
-        raise httpx.ConnectError("boom")
+        raise self.exc
 
     async def get_availability(self, store_id, dans):
-        raise httpx.ConnectError("boom")
+        raise self.exc
 
     async def geocode(self, query):
-        raise httpx.ConnectError("boom")
+        raise self.exc
 
 
-class TestServiceUnreachable:
+class TestDescribeError:
+    def test_network(self):
+        text = bot.describe_error(httpx.ConnectError("boom"))
+        assert "nicht erreichbar" in text and "später erneut" in text
+
+    def test_timeout(self):
+        text = bot.describe_error(httpx.ReadTimeout("boom"))
+        assert "Zeitüberschreitung" in text and "später erneut" in text
+
+    def test_server_error_is_transient(self):
+        text = bot.describe_error(status_error(503))
+        assert "HTTP 503" in text and "später erneut" in text
+
+    def test_rate_limit_is_transient(self):
+        text = bot.describe_error(status_error(429))
+        assert "HTTP 429" in text and "später erneut" in text
+
+    def test_client_error_is_permanent(self):
+        text = bot.describe_error(status_error(404))
+        assert "HTTP 404" in text and "Schnittstelle" in text
+        assert "später erneut" not in text
+
+    def test_names_the_service(self):
+        assert bot.describe_error(httpx.ConnectError("boom"), bot.GEOCODER).startswith(bot.GEOCODER)
+
+
+class TestHandlerErrors:
     async def test_search(self):
         update, rec = make_message_update()
         await bot.cmd_search(update, make_ctx(RaisingApi(), args=["x"]))
-        assert bot.SERVICE_UNREACHABLE in rec.texts
+        assert rec.texts == [bot.describe_error(httpx.ConnectError("boom"))]
 
-    async def test_store_geocode(self):
+    async def test_store_geocode_names_the_geocoder(self):
         update, rec = make_message_update()
         await bot.cmd_store(update, make_ctx(RaisingApi(), args=["76133"]))
-        assert bot.SERVICE_UNREACHABLE in rec.texts
+        assert rec.texts == [bot.describe_error(httpx.ConnectError("boom"), bot.GEOCODER)]
 
-    async def test_check(self):
+    async def test_check_names_store_and_cause(self):
         storage.add_store(1, "D357", "Herne")
         storage.add_subscription(1, 100, "Zahnpasta")
         update, rec = make_message_update()
-        await bot.cmd_check(update, make_ctx(RaisingApi()))
-        assert bot.SERVICE_UNREACHABLE in rec.texts
+        await bot.cmd_check(update, make_ctx(RaisingApi(status_error(404))))
+        assert len(rec.texts) == 1
+        assert "Herne" in rec.texts[0] and "HTTP 404" in rec.texts[0]
 
     async def test_callback_store(self):
         update, rec = make_callback_update("store:D357")
         await bot.on_callback(update, make_ctx(RaisingApi()))
-        assert bot.SERVICE_UNREACHABLE in rec.texts
+        assert rec.texts == [bot.describe_error(httpx.ConnectError("boom"))]
+
+    async def test_subscribe_reports_failed_initial_check(self):
+        storage.add_store(1, "D357", "Herne")
+        update, rec = make_message_update()
+        ctx = make_ctx(RaisingApi(status_error(404)))
+        ctx.application.bot_data["titles"] = {100: "Zahnpasta"}
+        await bot._subscribe(update, ctx, 1, 100)
+        assert storage.has_subscription(1, 100)
+        assert "Herne — Abruf fehlgeschlagen" in rec.texts[0]
+        assert "HTTP 404" in rec.texts[0]
+
+    async def test_list_flags_stale_state_during_outage(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        ctx = make_ctx(HandlerApi())
+        ctx.application.bot_data["outages"] = {
+            "D357": bot.Outage(config.OUTAGE_NOTIFY_AFTER_CYCLES, "dm ist kaputt.")
+        }
+        update, rec = make_message_update()
+        await bot.cmd_list(update, ctx)
+        assert rec.texts[0].startswith("⚠️")
+
+    async def test_list_has_no_warning_without_outage(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        update, rec = make_message_update()
+        await bot.cmd_list(update, make_ctx(HandlerApi()))
+        assert "⚠️" not in rec.texts[0]
 
 
 class TestEnforceAllowlist:

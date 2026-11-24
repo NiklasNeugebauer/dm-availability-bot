@@ -2,6 +2,7 @@
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
@@ -15,6 +16,7 @@ from app.config import (
     MAX_STORES_PER_CHAT,
     MAX_SUBSCRIPTIONS_PER_CHAT,
     MAX_TITLE_CACHE,
+    OUTAGE_NOTIFY_AFTER_CYCLES,
     STORE_SEARCH_RADIUS_KM,
 )
 from app.dm_api import Availability, DmApi
@@ -24,8 +26,60 @@ logger = logging.getLogger(__name__)
 # dm store IDs look like "D357"; validate before interpolating into a URL path.
 STORE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,16}")
 
-# Shown when dm/geocoding is unreachable, so users can tell it apart from a bot bug.
-SERVICE_UNREACHABLE = "Der Dienst ist gerade nicht erreichbar. Bitte versuche es später erneut."
+DM = "dm"
+GEOCODER = "Die Ortssuche"
+
+
+def _is_permanent(exc: Exception) -> bool:
+    """True for failures that retrying won't fix (the service rejects the request itself)."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    code = exc.response.status_code
+    return 400 <= code < 500 and code not in (408, 429)
+
+
+def error_reason(exc: Exception, service: str = DM) -> str:
+    """One sentence naming what went wrong, with ``service`` as its subject."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code == 429:
+            return f"{service} begrenzt gerade die Anzahl der Anfragen (HTTP 429)."
+        if code >= 500:
+            return f"{service} meldet einen Serverfehler (HTTP {code})."
+        if _is_permanent(exc):
+            return (
+                f"{service} lehnt die Anfrage ab (HTTP {code}) — "
+                "vermutlich wurde die Schnittstelle geändert."
+            )
+        return f"{service} antwortet mit einem Fehler (HTTP {code})."
+    if isinstance(exc, httpx.TimeoutException):
+        return f"{service} antwortet nicht (Zeitüberschreitung)."
+    if isinstance(exc, httpx.TransportError):
+        return f"{service} ist nicht erreichbar (Netzwerkfehler)."
+    return f"{service} liefert eine unerwartete Antwort ({type(exc).__name__})."
+
+
+def describe_error(exc: Exception, service: str = DM) -> str:
+    """What went wrong plus whether trying again is worthwhile."""
+    if _is_permanent(exc):
+        hint = "Erneut versuchen hilft vermutlich nicht, der Bot muss angepasst werden."
+    else:
+        hint = "Bitte versuche es später erneut."
+    return f"{error_reason(exc, service)} {hint}"
+
+
+@dataclass
+class Outage:
+    """A store's current run of failed poll cycles."""
+
+    failures: int
+    reason: str
+
+
+def _confirmed_outages(context: ContextTypes.DEFAULT_TYPE) -> dict[str, Outage]:
+    """Stores that have failed often enough in a row to be worth telling users about."""
+    outages = context.application.bot_data.get("outages", {})
+    return {s: o for s, o in outages.items() if o.failures >= OUTAGE_NOTIFY_AFTER_CYCLES}
 
 def _numbered_buttons(prefix: str, action: str, items: list[tuple]) -> list[list[InlineKeyboardButton]]:
     """One full-width '<prefix> <n> · <label>' button per (value, label) item.
@@ -139,8 +193,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _reply_store_choices(update: Update, context: ContextTypes.DEFAULT_TYPE, lat: float, lon: float):
     try:
         stores = await get_api(context).find_stores(lat, lon, STORE_SEARCH_RADIUS_KM)
-    except httpx.HTTPError:
-        await update.message.reply_text(SERVICE_UNREACHABLE)
+    except httpx.HTTPError as exc:
+        await update.message.reply_text(describe_error(exc))
         return
     if not stores:
         await update.message.reply_text(
@@ -172,8 +226,8 @@ async def cmd_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         place = await get_api(context).geocode(query)
-    except httpx.HTTPError:
-        await update.message.reply_text(SERVICE_UNREACHABLE)
+    except httpx.HTTPError as exc:
+        await update.message.reply_text(describe_error(exc, GEOCODER))
         return
     if place is None:
         await update.message.reply_text(
@@ -196,8 +250,8 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         products = await get_api(context).search_products(query)
-    except httpx.HTTPError:
-        await update.message.reply_text(SERVICE_UNREACHABLE)
+    except httpx.HTTPError as exc:
+        await update.message.reply_text(describe_error(exc))
         return
     if not products:
         await update.message.reply_text(f"Keine Produkte für '{query}' gefunden.")
@@ -247,17 +301,22 @@ async def _subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id
 
     # Seed the current state at every store so the first poll doesn't notify
     lines = [f"Beobachte {name}.", "Aktueller Status:"]
+    failure = None
     for store in stores:
         try:
             availability = (await get_api(context).get_availability(store["store_id"], [dan])).get(dan)
-        except Exception:
+        except Exception as exc:
             logger.exception("Initial availability check failed for DAN %s", dan)
-            availability = None
+            failure = exc
+            lines.append(f"⚠️ {store['store_name']} — Abruf fehlgeschlagen")
+            continue
         if availability is not None and availability.store_available is not None:
             storage.update_status(
                 chat_id, dan, store["store_id"], availability.store_available, availability.store_stock
             )
         lines.append(status_line(store["store_name"], availability))
+    if failure is not None:
+        lines += ["", describe_error(failure)]
     await reply("\n".join(lines))
 
 
@@ -299,6 +358,8 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     numbers = {row["dan"]: i for i, row in enumerate(subscriptions, start=1)}
     statuses = storage.list_statuses(chat_id)  # ordered by store, then product
     lines = []
+    if any(row["store_id"] in _confirmed_outages(context) for row in statuses):
+        lines = ["⚠️ Die Verfügbarkeit kann gerade nicht abgerufen werden, der Stand unten ist veraltet.", ""]
     if not statuses:
         lines = ["Kein Markt gewählt!", ""]
         lines += [f"{numbers[row['dan']]}. {row['name']}" for row in subscriptions]
@@ -335,8 +396,10 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for store in stores:
         try:
             availability = await get_api(context).get_availability(store["store_id"], dans)
-        except httpx.HTTPError:
-            await update.message.reply_text(SERVICE_UNREACHABLE)
+        except httpx.HTTPError as exc:
+            await update.message.reply_text(
+                f"Die Prüfung für {store['store_name']} ist fehlgeschlagen. {describe_error(exc)}"
+            )
             return
         if lines:
             lines.append("")
@@ -370,8 +433,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         try:
             store = await get_api(context).get_store(value)
-        except httpx.HTTPError:
-            await query.edit_message_text(SERVICE_UNREACHABLE)
+        except httpx.HTTPError as exc:
+            await query.edit_message_text(describe_error(exc))
             return
         if store is None:
             await query.edit_message_text("Dieser Markt konnte leider nicht gefunden werden.")
@@ -424,14 +487,26 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
     """Periodic job: poll availability per store and notify on changes."""
     api = get_api(context)
     grouped = storage.subscriptions_by_store()
+    outages: dict[str, Outage] = context.application.bot_data.setdefault("outages", {})
+    for store_id in outages.keys() - grouped.keys():
+        del outages[store_id]  # nobody watches this store any more
     pruned: set[int] = set()  # chats deleted mid-run (blocked the bot) — skip their other rows
     for store_id, subscriptions in grouped.items():
         dans = sorted({row["dan"] for row in subscriptions})
         try:
             availability = await api.get_availability(store_id, dans)
-        except Exception:
-            logger.exception("Availability check failed for store %s", store_id)
+        except Exception as exc:
+            failures = outages[store_id].failures + 1 if store_id in outages else 1
+            outages[store_id] = Outage(failures, error_reason(exc))
+            if failures == 1:
+                logger.exception("Availability check failed for store %s", store_id)
+            else:
+                # The traceback is in the log from the first failure of this run.
+                logger.warning(
+                    "Availability check failed for store %s (%d in a row): %s", store_id, failures, exc
+                )
             continue
+        outages.pop(store_id, None)
         # Schema-drift canary: if we asked about DANs but got zero usable store
         # rows back, dm likely changed the tile format and we'd silently go quiet.
         if dans and not any(a.store_available is not None for a in availability.values()):
@@ -479,6 +554,58 @@ async def check_all_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 current.store_available, current.store_stock,
                 expected=row["last_available"],
             )
+    await _report_outages(context, grouped, pruned)
+
+
+async def _report_outages(context: ContextTypes.DEFAULT_TYPE, grouped: dict, pruned: set[int]):
+    """Warn each chat once when its stores keep failing, and once more when they recover."""
+    outages: dict[str, Outage] = context.application.bot_data.get("outages", {})
+    confirmed = _confirmed_outages(context)
+    warned: set[int] = context.application.bot_data.setdefault("outage_warned", set())
+
+    failing: dict[int, dict[str, str]] = {}  # chat -> {store name: reason}, confirmed outages only
+    unsettled: set[int] = set()  # chats with any store that failed this cycle
+    chats: set[int] = set()
+    for store_id, subscriptions in grouped.items():
+        for row in subscriptions:
+            chat_id = row["chat_id"]
+            chats.add(chat_id)
+            if store_id in outages:
+                unsettled.add(chat_id)
+            if store_id in confirmed:
+                failing.setdefault(chat_id, {})[row["store_name"]] = confirmed[store_id].reason
+    warned &= chats - pruned  # forget chats that left
+
+    for chat_id in sorted(chats - pruned):
+        if chat_id in failing and chat_id not in warned:
+            stores = failing[chat_id]
+            reasons = list(dict.fromkeys(stores.values()))
+            text = (
+                "⚠️ Ich kann die Verfügbarkeit seit mehreren Versuchen nicht mehr abrufen.\n"
+                f"Betroffen: {', '.join(stores)}\n"
+                f"Grund: {' / '.join(reasons)}\n"
+                "Deine Beobachtungen werden so lange nicht aktualisiert. "
+                "Ich melde mich, sobald es wieder funktioniert."
+            )
+        elif chat_id in warned and chat_id not in unsettled:
+            text = "✅ Die Verfügbarkeit kann wieder abgerufen werden, deine Beobachtungen sind aktuell."
+        else:
+            continue
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text)
+        except Forbidden:
+            logger.info("Chat %s blocked the bot; removing its data", chat_id)
+            storage.delete_chat(chat_id)
+            warned.discard(chat_id)
+            continue
+        except TelegramError:
+            # Leave the warned state untouched so the message is retried next cycle.
+            logger.exception("Failed to send outage notice to chat %s", chat_id)
+            continue
+        if chat_id in failing:
+            warned.add(chat_id)
+        else:
+            warned.discard(chat_id)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):

@@ -4,8 +4,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
+
 from app import storage
 from app.bot import check_all_subscriptions, parse_dan, stale_note, status_line, transition
+from app.config import OUTAGE_NOTIFY_AFTER_CYCLES
 from app.dm_api import Availability
 
 
@@ -307,3 +310,98 @@ class TestCheckAllSubscriptions:
         assert context.bot.attempts == 1
         assert storage.get_stores(1) == []
         assert storage.list_subscriptions(1) == []
+
+
+class FlakyApi:
+    """Fails for the stores in ``broken``; otherwise reports everything in stock."""
+
+    def __init__(self, broken=()):
+        self.broken = set(broken)
+
+    async def get_availability(self, store_id, dans):
+        if store_id in self.broken:
+            request = httpx.Request("GET", "https://example.invalid/x")
+            raise httpx.HTTPStatusError(
+                "boom", request=request, response=httpx.Response(404, request=request)
+            )
+        return {dan: Availability(dan, True, 3, True) for dan in dans}
+
+
+class TestOutageNotices:
+    async def _run(self, ctx, cycles=1):
+        for _ in range(cycles):
+            await check_all_subscriptions(ctx)
+
+    async def test_warns_once_after_repeated_failures(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        ctx = make_context(FlakyApi(broken={"D357"}))
+
+        await self._run(ctx, OUTAGE_NOTIFY_AFTER_CYCLES - 1)
+        assert ctx.bot.messages == []
+
+        await self._run(ctx)
+        assert len(ctx.bot.messages) == 1
+        chat_id, text = ctx.bot.messages[0]
+        assert chat_id == 1
+        assert "Herne" in text and "HTTP 404" in text
+
+        await self._run(ctx, 5)
+        assert len(ctx.bot.messages) == 1
+
+    async def test_announces_recovery_once(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        api = FlakyApi(broken={"D357"})
+        ctx = make_context(api)
+        await self._run(ctx, OUTAGE_NOTIFY_AFTER_CYCLES)
+
+        api.broken.clear()
+        await self._run(ctx, 3)
+        texts = [text for _, text in ctx.bot.messages]
+        assert len(texts) == 2
+        assert texts[1].startswith("✅")
+
+    async def test_short_blip_stays_silent(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        api = FlakyApi(broken={"D357"})
+        ctx = make_context(api)
+        await self._run(ctx, OUTAGE_NOTIFY_AFTER_CYCLES - 1)
+        api.broken.clear()
+        await self._run(ctx, 2)
+        assert ctx.bot.messages == []
+
+    async def test_only_chats_watching_the_broken_store_are_warned(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        storage.add_store(2, "D999", "Bochum")
+        storage.add_subscription(2, 100, "Zahnpasta")
+        ctx = make_context(FlakyApi(broken={"D357"}))
+        await self._run(ctx, OUTAGE_NOTIFY_AFTER_CYCLES)
+        assert [chat_id for chat_id, _ in ctx.bot.messages] == [1]
+
+    async def test_one_message_lists_every_broken_store(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(1, "D999", "Bochum")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        ctx = make_context(FlakyApi(broken={"D357", "D999"}))
+        await self._run(ctx, OUTAGE_NOTIFY_AFTER_CYCLES)
+        assert len(ctx.bot.messages) == 1
+        assert "Herne" in ctx.bot.messages[0][1] and "Bochum" in ctx.bot.messages[0][1]
+
+    async def test_recovery_waits_for_every_store(self):
+        storage.add_store(1, "D357", "Herne")
+        storage.add_store(1, "D999", "Bochum")
+        storage.add_subscription(1, 100, "Zahnpasta")
+        api = FlakyApi(broken={"D357", "D999"})
+        ctx = make_context(api)
+        await self._run(ctx, OUTAGE_NOTIFY_AFTER_CYCLES)
+
+        api.broken.discard("D999")
+        await self._run(ctx)
+        assert len(ctx.bot.messages) == 1
+
+        api.broken.clear()
+        await self._run(ctx)
+        assert len(ctx.bot.messages) == 2
